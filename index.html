@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin-allow-popups">  
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Fraud Productivity Suite</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -436,9 +435,9 @@ function bootWithUser(user) {
   if (!state.user.isSupervisor && state.user.displayName) state.selectedAnalyst = state.user.displayName;
   if (state.user.isSupervisor) {
     document.getElementById("analystFilter").style.display = "block";
-    document.getElementById("teamDirBtn").style.display = "block";
     document.getElementById("userMgmtBtn").style.display = "block";
   }
+  document.getElementById("teamDirBtn").style.display = "block";
   document.getElementById("teamDirBtn").addEventListener("click", function(){ showView("team"); loadTeamData(); });
   document.getElementById("userMgmtBtn").addEventListener("click", function(){ showView("users"); loadUsers(); });
   document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; applyAnalystFilter(); applyCaseFilter(); });
