@@ -1,0 +1,90 @@
+# Privacy Policy — Fetch Productivity Suite
+
+**Last updated:** July 2026
+**Maintained by:** Fetch Rewards Fraud Operations
+
+---
+
+## What this extension does
+
+The Fetch Productivity Suite is an internal productivity tool used exclusively by Fetch Rewards fraud analysts. It tracks time spent on fraud review tasks and logs fraud case activity to an internal Google Sheet managed by the Fraud Operations team. It is not distributed to, or intended for, the general public.
+
+---
+
+## What data is collected
+
+The extension collects the following data:
+
+- **Analyst display name** — entered manually by the analyst in the extension settings
+- **Time tracking data** — task name, duration, start time, and end time for work sessions
+- **Fraud case activity** — case IDs, platform (Kount, Zendesk, or RADAR), and handle time for cases reviewed during a session
+- **Date and timestamp** of each activity
+- **Sync/connection status** — used only to confirm data successfully reached the internal backend
+
+---
+
+## What data is NOT collected
+
+- Passwords or login credentials
+- Browsing history outside of the specific fraud review platforms (Kount, Zendesk, RADAR)
+- Personal information beyond the analyst's display name
+- Financial information
+- Location data
+- Health information
+- Web browsing activity unrelated to the platforms above
+
+---
+
+## How data is used
+
+All collected data is used solely for internal workforce productivity reporting within Fetch Rewards. Specifically:
+
+- Time tracking data is used to generate productivity reports for fraud analysts and their supervisors
+- Case activity data is used to calculate average handle time and case volume metrics
+- Sync status data is used only to alert the analyst or admin to connection issues
+- No data is sold, shared with third parties, or used for advertising
+- No data is used to determine creditworthiness or for lending purposes
+
+---
+
+## Where data is stored
+
+Data is transmitted over HTTPS to a Google Apps Script endpoint and stored in a Google Sheet accessible only to authorized Fetch Rewards Fraud Operations team members. All data is stored within Google's infrastructure. A local JSON backup option is also available to the analyst as a manual recovery mechanism in case of sync failure; this backup is downloaded to the analyst's own device and is not transmitted elsewhere.
+
+---
+
+## Who has access
+
+Only Fetch Rewards Fraud Operations team members with explicit access to the internal Google Sheet can view collected data. Access is managed by the Fraud Operations team administrator. Within the extension's dashboard, analysts can only view their own data; supervisors and admins can view data for the full team.
+
+---
+
+## Data retention
+
+Data is retained indefinitely for historical reporting purposes. Analysts who leave the team have their historical data preserved for reporting accuracy, but are hidden from active/current team views.
+
+---
+
+## Permissions this extension uses, and why
+
+- **activeTab / tabs** — to detect which fraud platform (Zendesk, Kount, RADAR) tab is currently active, so time tracking applies to the correct task
+- **scripting** — to read case and activity information directly from the Zendesk, Kount, and RADAR pages the analyst is already working in
+- **storage** — to save time-tracking state locally so an in-progress session isn't lost on a page refresh
+- **alarms** — to periodically check sync status and refresh timers in the background
+- **notifications** — to alert the analyst locally if a sync fails and needs attention
+- **downloads** — to allow the analyst to save a local JSON backup of their tracked data as a manual recovery option
+- **Host permissions** (Zendesk, Kount, RADAR, script.google.com) — required so the extension can read case data from those specific fraud platforms and sync it to the internal Google Sheet backend. No other websites are accessed.
+
+This extension does not use remote code execution; all logic ships within the extension package itself.
+
+---
+
+## Changes to this policy
+
+This policy may be updated as the extension evolves. The "Last updated" date at the top of this document will reflect any changes.
+
+---
+
+## Contact
+
+For questions about this privacy policy or data handling, contact the Fetch Rewards Fraud Operations team.
