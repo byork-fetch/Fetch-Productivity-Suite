@@ -532,11 +532,12 @@ function renderCaseStats() {
   var ws=getWeekStart(new Date()), we=getWeekEnd(new Date());
   var inWeek=state.cases.filter(function(c){return c.date>=formatDate(ws)&&c.date<=formatDate(we);});
   var kc=inWeek.filter(function(c){return c.platform==='Kount';}), zc=inWeek.filter(function(c){return c.platform==='Zendesk';}), rc=inWeek.filter(function(c){return c.platform==='RADAR';});
-  var ka=ahtFromCases(kc), za=ahtFromCases(zc);
+  var ka=ahtFromCases(kc), za=ahtFromCases(zc), ra=ahtFromCases(rc);
   var cards=[
     {label:"Cases This Week",value:String(inWeek.length),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")},
     {label:"Kount AHT",value:fmtSeconds(ka.avgSec),sub:ka.count?"over "+ka.count+" case"+(ka.count===1?"":"s"):"no timed cases yet"},
-    {label:"Zendesk AHT",value:fmtSeconds(za.avgSec),sub:za.count?"over "+za.count+" case"+(za.count===1?"":"s"):"no timed cases yet"}
+    {label:"Zendesk AHT",value:fmtSeconds(za.avgSec),sub:za.count?"over "+za.count+" case"+(za.count===1?"":"s"):"no timed cases yet"},
+    {label:"RADAR AHT",value:fmtSeconds(ra.avgSec),sub:ra.count?"over "+ra.count+" case"+(ra.count===1?"":"s"):"no timed cases yet"}
   ];
   var g=document.getElementById("caseStatsGrid");
   if (g) g.innerHTML=cards.map(function(c){return '<div class="stat-card case-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("");
