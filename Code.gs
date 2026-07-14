@@ -1,5 +1,5 @@
 // ============================================================
-// FRAUD PRODUCTIVITY SUITE — Google Apps Script Backend
+// PI PRODUCTIVITY SUITE — Google Apps Script Backend
 // Code.gs — v3.9 (GitHub Pages / fetch() compatible)
 // ============================================================
 // All data reads now go through doGet with ?action=... params.
@@ -98,8 +98,8 @@ function doGet(e) {
   }
 
   // No action — serve the dashboard HTML (fallback, not used when hosted on GitHub Pages)
-  return HtmlService.createHtmlOutput("<p>Fraud Productivity Suite API</p>")
-    .setTitle("Fraud Productivity Suite API");
+  return HtmlService.createHtmlOutput("<p>PI Productivity Suite API</p>")
+    .setTitle("PI Productivity Suite API");
 }
 
 // ============================================================
@@ -235,7 +235,7 @@ function getTeamData(startDate, endDate) {
 }
 
 // ============================================================
-// FRAUD CASES
+// PI CASES
 // ============================================================
 function _readAllCases(startDate, endDate) {
   try {
