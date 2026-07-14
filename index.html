@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Fraud Productivity Suite</title>
+<title>PI Productivity Suite</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
@@ -65,6 +65,9 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .period-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;}
 .period-row h3{font-size:1.25rem;font-weight:600;}
 .chart-wrap{position:relative;}
+.chart-wrap-scroll{max-height:520px;overflow-y:auto;overflow-x:hidden;}
+.main-grid{min-width:0;}
+.main-grid>*{min-width:0;}
 .analyst-table{max-height:420px;overflow-y:auto;}
 .analyst-row{display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;border-radius:.5rem;margin-bottom:.4rem;background:var(--muted-bg);}
 .analyst-row:hover{filter:brightness(.97);}
@@ -153,7 +156,7 @@ textarea{resize:vertical;min-height:80px;}
 <div id="login-screen">
   <div class="login-card">
     <div class="login-logo">📊</div>
-    <h1 class="login-title">Fraud Productivity Suite</h1>
+    <h1 class="login-title">PI Productivity Suite</h1>
     <p class="login-sub">Sign in with your Fetch Rewards Google account to continue.</p>
     <div id="g_id_onload" data-client_id="422172167913-rv8addd23lt5085c9ha235sblcpih199.apps.googleusercontent.com" data-callback="handleGoogleSignIn" data-auto_prompt="false"></div>
     <div id="g_id_signin" data-type="standard" data-size="large" data-theme="outline" data-text="sign_in_with" data-shape="rectangular" data-logo_alignment="left" data-width="340"></div>
@@ -168,7 +171,7 @@ textarea{resize:vertical;min-height:80px;}
 <div id="app" style="display:none">
   <div class="container">
     <header class="header">
-      <div><h1>Fraud Productivity Suite</h1></div>
+      <div><h1>PI Productivity Suite</h1></div>
       <div class="header-actions">
         <button id="themeToggle" class="btn btn-ghost" title="Toggle theme">🌙</button>
         <select id="analystFilter" class="select-ghost" style="display:none"><option value="all">All Analysts</option></select>
@@ -205,7 +208,7 @@ textarea{resize:vertical;min-height:80px;}
           </div>
           <div class="card" style="margin-bottom:1.25rem">
             <div class="card-header"><h2>Time by Task</h2></div>
-            <div class="card-body chart-wrap"><canvas id="taskChart"></canvas></div>
+            <div class="card-body chart-wrap chart-wrap-scroll"><canvas id="taskChart"></canvas></div>
           </div>
         </div>
         <div class="card">
@@ -213,7 +216,7 @@ textarea{resize:vertical;min-height:80px;}
           <div class="card-body"><div class="analyst-table" id="analystTable"><div class="empty">Select a reporting period</div></div></div>
         </div>
       </div>
-      <h2 class="section-heading">🛡️ Fraud Cases</h2>
+      <h2 class="section-heading">🛡️ PI Cases</h2>
       <div class="main-grid">
         <div class="left-col">
           <div class="card"><div class="card-header"><h2>Cases by Platform</h2></div><div class="card-body chart-wrap"><canvas id="caseChart"></canvas></div></div>
@@ -667,7 +670,7 @@ function renderTeamContent(data){
   var assignments=(data.assignments||[]).filter(function(a){if(!state.user.isSupervisor)return a.analyst_name===state.user.displayName;return!state.selectedSupervisor||a.supervisor_email===state.selectedSupervisor;});
   if(!assignments.length){document.getElementById("teamContent").innerHTML='<div class="card"><div class="empty" style="padding:3rem">No team assignments found</div></div>';return;}
   var allCases=data.cases||[],groups={};
-  assignments.forEach(function(a){var key=a.team_name||a.supervisor_email;if(!groups[key])groups[key]={label:key,members:[]};var me=data.entries.filter(function(e){return e.analyst===a.analyst_name;}),mc=allCases.filter(function(c){return c.analyst===a.analyst_name;}),aht=ahtFromCases(mc);groups[key].members.push({name:a.analyst_name,role:a.role||"Fraud Analyst",totalSecs:sum(me,"duration"),util:calcUtilization(me),lastEntry:me.length?me.sort(function(a,b){return b.date.localeCompare(a.date);})[0].date:null,caseCount:mc.length,ahtSec:aht.avgSec});});
+  assignments.forEach(function(a){var key=a.team_name||a.supervisor_email;if(!groups[key])groups[key]={label:key,members:[]};var me=data.entries.filter(function(e){return e.analyst===a.analyst_name;}),mc=allCases.filter(function(c){return c.analyst===a.analyst_name;}),aht=ahtFromCases(mc);groups[key].members.push({name:a.analyst_name,role:a.role||"PI Analyst",totalSecs:sum(me,"duration"),util:calcUtilization(me),lastEntry:me.length?me.sort(function(a,b){return b.date.localeCompare(a.date);})[0].date:null,caseCount:mc.length,ahtSec:aht.avgSec});});
   document.getElementById("teamContent").innerHTML=Object.values(groups).map(function(g){return '<div class="team-section"><div class="team-section-header"><span>'+esc(g.label)+'</span><span class="badge">'+g.members.length+' Analysts</span></div><div class="team-grid">'+g.members.map(function(m){return '<div class="analyst-card" onclick="viewAnalystDetail(\''+esc(m.name)+'\')"><h3>'+esc(m.name)+'</h3><p class="role">'+esc(m.role)+'</p><div class="analyst-meta"><div class="analyst-meta-row"><span>🕐</span><span class="lbl">Total:</span> <strong>'+fmtDurationShort(m.totalSecs)+'</strong></div><div class="analyst-meta-row"><span>📊</span><span class="lbl">Utilization:</span> <strong class="'+(m.util>=75?"util-good":"util-warn")+'">'+m.util+'%</strong></div><div class="analyst-meta-row"><span>🛡️</span><span class="lbl">Cases:</span> <strong>'+m.caseCount+'</strong></div><div class="analyst-meta-row"><span>⏱️</span><span class="lbl">AHT:</span> <strong>'+fmtSeconds(m.ahtSec)+'</strong></div>'+(m.lastEntry?'<div class="analyst-meta-row"><span>📅</span><span class="lbl">Last Entry:</span> <strong>'+m.lastEntry+'</strong></div>':'')+' </div></div>';}).join("")+'</div></div>';}).join("");
 }
 
