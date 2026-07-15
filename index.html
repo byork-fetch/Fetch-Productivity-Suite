@@ -467,15 +467,29 @@ function setGreeting() {
 }
 
 function loadMonths() {
+  // Speed optimization: don't wait for the months list before loading data.
+  // Assume the current month (the overwhelmingly common case) and kick off
+  // its entries/cases fetch immediately, in parallel with the months-list
+  // request, instead of two round-trips back-to-back. If it turns out the
+  // current month has no data, we fall back to the most recent month once
+  // the months list comes back.
+  var cur = formatMonthKey(new Date());
+  state.selectedMonth = cur;
+  var sel = document.getElementById("monthSelect");
+  sel.innerHTML = '<option value="'+cur+'">'+formatMonthLabel(cur)+'</option>';
+  fetchEntries(); fetchCaseEntries();
+
   apiGet("getAvailableMonths").then(function(months) {
-    var sel=document.getElementById("monthSelect"); sel.innerHTML="";
-    if (!months||months.error||months.length===0) {
-      var cur=formatMonthKey(new Date()); sel.innerHTML='<option value="'+cur+'">'+formatMonthLabel(cur)+'</option>'; state.selectedMonth=cur;
+    if (!months||months.error||months.length===0) return; // current month already showing, nothing to correct
+    sel.innerHTML = "";
+    months.forEach(function(m){ var o=document.createElement("option"); o.value=m; o.textContent=formatMonthLabel(m); sel.appendChild(o); });
+    if (months.indexOf(cur) === -1) {
+      // No entries for the current month yet — switch to the most recent month with data.
+      state.selectedMonth = months[0]; sel.value = months[0];
+      fetchEntries(); fetchCaseEntries();
     } else {
-      months.forEach(function(m){ var o=document.createElement("option"); o.value=m; o.textContent=formatMonthLabel(m); sel.appendChild(o); });
-      state.selectedMonth=months[0]; sel.value=months[0];
+      sel.value = cur;
     }
-    fetchEntries(); fetchCaseEntries();
   }).catch(function(err){ toast("error","Failed to load months: "+err); });
 }
 
