@@ -36,6 +36,46 @@ function isPrivileged(role) {
 }
 
 // ============================================================
+// CACHING — Sheets reads are the slowest part of every request.
+// We cache computed results (not raw sheet data) in Script Cache,
+// keyed with a version number so any write anywhere instantly
+// invalidates every cached read, rather than us trying to guess
+// which specific cache keys a given write affects.
+// ============================================================
+var CACHE_DEFAULT_TTL = 120; // seconds
+
+function getCacheVersion() {
+  var props = PropertiesService.getScriptProperties();
+  return props.getProperty("cacheVersion") || "0";
+}
+
+function bumpCacheVersion() {
+  var props = PropertiesService.getScriptProperties();
+  var v = parseInt(props.getProperty("cacheVersion") || "0", 10) + 1;
+  props.setProperty("cacheVersion", String(v));
+}
+
+// Wraps an expensive computeFn() in a cached read. Falls back to
+// computing fresh if the cache is unavailable, empty, or the result
+// is too large to cache (Script Cache has a 100KB per-key limit) —
+// caching is a speed optimization here, never a hard dependency.
+function cachedCall(key, ttlSeconds, computeFn) {
+  var cache = CacheService.getScriptCache();
+  var fullKey = key + ":v" + getCacheVersion();
+  try {
+    var hit = cache.get(fullKey);
+    if (hit) return JSON.parse(hit);
+  } catch(e) { /* fall through and compute fresh */ }
+
+  var result = computeFn();
+  try {
+    var json = JSON.stringify(result);
+    if (json.length < 100000) cache.put(fullKey, json, ttlSeconds || CACHE_DEFAULT_TTL);
+  } catch(e) { /* not cacheable — fine, just skip caching this result */ }
+  return result;
+}
+
+// ============================================================
 // CORS HEADERS — required for fetch() from GitHub Pages
 // ============================================================
 function corsHeaders() {
@@ -139,45 +179,49 @@ function getUserByEmail(email) {
 // ============================================================
 function getTimeEntries(startDate, endDate) {
   try {
-    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
-    var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
-    if (!sheet || sheet.getLastRow() < 2) return [];
-    var data    = sheet.getRange(2, 1, sheet.getLastRow() - 1, 13).getValues();
-    var headers = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id"];
-    var start = new Date(startDate + "T00:00:00"), end = new Date(endDate + "T23:59:59");
-    var results = [];
-    for (var i = 0; i < data.length; i++) {
-      var row = data[i];
-      if (!row[0] && !row[1]) continue;
-      var dateVal   = row[5];
-      var entryDate = (dateVal instanceof Date) ? dateVal : new Date(dateVal + "T00:00:00");
-      if (entryDate >= start && entryDate <= end) {
-        var entry = {};
-        for (var j = 0; j < headers.length; j++) {
-          var val = row[j];
-          entry[headers[j]] = (val instanceof Date) ? Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd") : (val === "" ? null : val);
+    return cachedCall("entries:" + startDate + ":" + endDate, 120, function() {
+      var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
+      if (!sheet || sheet.getLastRow() < 2) return [];
+      var data    = sheet.getRange(2, 1, sheet.getLastRow() - 1, 13).getValues();
+      var headers = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id"];
+      var start = new Date(startDate + "T00:00:00"), end = new Date(endDate + "T23:59:59");
+      var results = [];
+      for (var i = 0; i < data.length; i++) {
+        var row = data[i];
+        if (!row[0] && !row[1]) continue;
+        var dateVal   = row[5];
+        var entryDate = (dateVal instanceof Date) ? dateVal : new Date(dateVal + "T00:00:00");
+        if (entryDate >= start && entryDate <= end) {
+          var entry = {};
+          for (var j = 0; j < headers.length; j++) {
+            var val = row[j];
+            entry[headers[j]] = (val instanceof Date) ? Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd") : (val === "" ? null : val);
+          }
+          results.push(entry);
         }
-        results.push(entry);
       }
-    }
-    return results;
+      return results;
+    });
   } catch(e) { return { error: e.toString() }; }
 }
 
 function getAvailableMonths() {
   try {
-    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
-    var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
-    if (!sheet || sheet.getLastRow() < 2) return [];
-    var data = sheet.getRange(2, 6, sheet.getLastRow() - 1, 1).getValues();
-    var months = {};
-    for (var i = 0; i < data.length; i++) {
-      var val = data[i][0];
-      if (!val) continue;
-      var dateStr = (val instanceof Date) ? Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd") : val.toString();
-      if (dateStr.length >= 7) months[dateStr.substring(0, 7)] = true;
-    }
-    return Object.keys(months).sort(function(a,b){ return b.localeCompare(a); });
+    return cachedCall("months", 300, function() {
+      var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
+      if (!sheet || sheet.getLastRow() < 2) return [];
+      var data = sheet.getRange(2, 6, sheet.getLastRow() - 1, 1).getValues();
+      var months = {};
+      for (var i = 0; i < data.length; i++) {
+        var val = data[i][0];
+        if (!val) continue;
+        var dateStr = (val instanceof Date) ? Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd") : val.toString();
+        if (dateStr.length >= 7) months[dateStr.substring(0, 7)] = true;
+      }
+      return Object.keys(months).sort(function(a,b){ return b.localeCompare(a); });
+    });
   } catch(e) { return []; }
 }
 
@@ -208,6 +252,7 @@ function updateTimeEntryData(id, updates, callerEmail) {
     sheet.getRange(rowIndex, 10).setValue(updates.edit_reason || "");
     sheet.getRange(rowIndex, 11).setValue(new Date().toISOString());
     if (!existingOriginal) sheet.getRange(rowIndex, 12).setValue(originalDuration);
+    bumpCacheVersion();
     return { success: true };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -217,20 +262,22 @@ function updateTimeEntryData(id, updates, callerEmail) {
 // ============================================================
 function getTeamData(startDate, endDate) {
   try {
-    var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
-    var taSheet = ss.getSheetByName(SHEET_TEAM_ASSIGN);
-    if (!taSheet || taSheet.getLastRow() < 2) return { assignments: [], entries: [], cases: [] };
-    var assignData  = taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 4).getValues();
-    var assignments = assignData
-      .filter(function(r){ return r[0] && !isHiddenRosterName(r[0]); })
-      .map(function(r){ return { analyst_name: r[0].toString(), supervisor_email: r[1].toString(), team_name: r[2].toString(), role: r[3].toString() }; });
-    var visibleAnalysts = {};
-    assignments.forEach(function(a){ visibleAnalysts[a.analyst_name] = true; });
-    var entries = getTimeEntries(startDate, endDate);
-    if (entries.error) return { error: entries.error };
-    entries = entries.filter(function(e){ return !isHiddenRosterName(e.analyst) && !!visibleAnalysts[e.analyst]; });
-    var cases = _readAllCases(startDate, endDate).filter(function(c){ return !isHiddenRosterName(c.analyst) && !!visibleAnalysts[c.analyst]; });
-    return { assignments: assignments, entries: entries, cases: cases };
+    return cachedCall("team:" + startDate + ":" + endDate, 120, function() {
+      var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var taSheet = ss.getSheetByName(SHEET_TEAM_ASSIGN);
+      if (!taSheet || taSheet.getLastRow() < 2) return { assignments: [], entries: [], cases: [] };
+      var assignData  = taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 4).getValues();
+      var assignments = assignData
+        .filter(function(r){ return r[0] && !isHiddenRosterName(r[0]); })
+        .map(function(r){ return { analyst_name: r[0].toString(), supervisor_email: r[1].toString(), team_name: r[2].toString(), role: r[3].toString() }; });
+      var visibleAnalysts = {};
+      assignments.forEach(function(a){ visibleAnalysts[a.analyst_name] = true; });
+      var entries = getTimeEntries(startDate, endDate);
+      if (entries.error) return { error: entries.error };
+      entries = entries.filter(function(e){ return !isHiddenRosterName(e.analyst) && !!visibleAnalysts[e.analyst]; });
+      var cases = _readAllCases(startDate, endDate).filter(function(c){ return !isHiddenRosterName(c.analyst) && !!visibleAnalysts[c.analyst]; });
+      return { assignments: assignments, entries: entries, cases: cases };
+    });
   } catch(e) { return { error: e.toString() }; }
 }
 
@@ -239,19 +286,21 @@ function getTeamData(startDate, endDate) {
 // ============================================================
 function _readAllCases(startDate, endDate) {
   try {
-    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
-    var sheet = ss.getSheetByName(SHEET_CASES);
-    if (!sheet || sheet.getLastRow() < 2) return [];
-    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
-    var tz   = Session.getScriptTimeZone();
-    var results = [];
-    for (var i = 0; i < data.length; i++) {
-      var row = data[i];
-      var dateStr = (row[0] instanceof Date) ? Utilities.formatDate(row[0], tz, "yyyy-MM-dd") : String(row[0] || "").substring(0, 10);
-      if (!dateStr || dateStr < startDate || dateStr > endDate) continue;
-      results.push({ date: dateStr, analyst: String(row[1] || ""), platform: String(row[2] || ""), case_id: String(row[3] || ""), source: String(row[4] || ""), handle_seconds: (typeof row[5] === "number" && row[5] > 0) ? row[5] : null, solved_at: String(row[7] || "") });
-    }
-    return results;
+    return cachedCall("cases_raw:" + startDate + ":" + endDate, 120, function() {
+      var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var sheet = ss.getSheetByName(SHEET_CASES);
+      if (!sheet || sheet.getLastRow() < 2) return [];
+      var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
+      var tz   = Session.getScriptTimeZone();
+      var results = [];
+      for (var i = 0; i < data.length; i++) {
+        var row = data[i];
+        var dateStr = (row[0] instanceof Date) ? Utilities.formatDate(row[0], tz, "yyyy-MM-dd") : String(row[0] || "").substring(0, 10);
+        if (!dateStr || dateStr < startDate || dateStr > endDate) continue;
+        results.push({ date: dateStr, analyst: String(row[1] || ""), platform: String(row[2] || ""), case_id: String(row[3] || ""), source: String(row[4] || ""), handle_seconds: (typeof row[5] === "number" && row[5] > 0) ? row[5] : null, solved_at: String(row[7] || "") });
+      }
+      return results;
+    });
   } catch(e) { return []; }
 }
 
@@ -282,6 +331,7 @@ function upsertUserData(email, role, displayName, callerEmail) {
     var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
     var sheet = ss.getSheetByName(SHEET_USERS);
     upsertSheetRow(sheet, email, [email, role, displayName], 1);
+    bumpCacheVersion();
     return { success: true };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -331,6 +381,7 @@ function importCSVData(csvText, callerEmail) {
       existingIds[sheetRowId] = true; inserted++;
     }
     if (newRows.length > 0) sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 13).setValues(newRows);
+    if (inserted > 0) bumpCacheVersion();
     return { success: true, inserted: inserted, skipped: skipped };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -406,6 +457,7 @@ function doPost(e) {
       }
     }
     sheet.appendRow([maxId, payload.analyst, payload.project||"Fetch Rewards", payload.task, Number(payload.duration), payload.date, payload.category||"Work", payload.start_time||null, payload.end_time||null, null, null, null, sheetRowId]);
+    bumpCacheVersion();
     return jsonResponse({ success: true, id: maxId });
   } catch(err) { return jsonResponse({ error: err.toString() }); }
 }
@@ -432,6 +484,7 @@ function handleCaseRow(payload) {
     var hs = (payload.handle_seconds===null||payload.handle_seconds===undefined)?'':payload.handle_seconds;
     var hm = hs===''?'':Math.round((hs/60)*100)/100;
     sheet.appendRow([payload.date||'', payload.analyst||'', payload.platform||'', payload.case_id||'', payload.source||'', hs, hm, payload.solved_at||'', dedupeKey]);
+    bumpCacheVersion();
     return jsonResponse({ success: true });
   } catch(err) { return jsonResponse({ error: err.toString() }); }
 }
