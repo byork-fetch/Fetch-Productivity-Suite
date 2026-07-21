@@ -200,20 +200,6 @@ textarea{resize:vertical;min-height:80px;}
               <div class="period-row"><h3>Reporting Period</h3><select id="monthSelect"><option value="">Loading…</option></select></div>
             </div>
           </div>
-          <div id="importCard" style="display:none;margin-bottom:1.25rem">
-            <div class="card">
-              <div class="card-header"><h2>Import Historical Data</h2></div>
-              <div class="card-body">
-                <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:1rem">Paste Toggl-exported CSV to import time entries in bulk.</p>
-                <div class="csv-drop" id="csvDropArea" onclick="document.getElementById('csvFileInput').click()">
-                  <div style="font-size:2rem;margin-bottom:.5rem">📁</div><p>Click to select CSV file, or drag &amp; drop</p>
-                </div>
-                <input type="file" id="csvFileInput" accept=".csv" style="display:none"/>
-                <div id="csvFileName" style="font-size:.83rem;color:var(--text-muted);margin-top:.5rem"></div>
-                <button id="importBtn" class="btn btn-primary" style="margin-top:1rem;width:100%;display:none">⬆ Import CSV</button>
-              </div>
-            </div>
-          </div>
           <div class="card" style="margin-bottom:1.25rem">
             <div class="card-header"><h2>Time by Task</h2></div>
             <div class="card-body chart-wrap chart-wrap-scroll"><canvas id="taskChart"></canvas></div>
@@ -256,13 +242,21 @@ textarea{resize:vertical;min-height:80px;}
         </div>
       </div>
       <div class="collapsible">
+        <button class="collapsible-trigger" onclick="toggleCollapsible('idleGaps')"><span>⏱️ Idle Time Gaps</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="collapsible-content" id="idleGapsContent">
+          <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:.85rem">Unaccounted gaps of 10+ minutes between consecutive logged activities — no break, lunch, or task covers this time.</p>
+          <div class="table-wrap"><table><thead><tr><th>Date</th><th>Analyst</th><th>After</th><th>Before</th><th>Gap Start</th><th>Gap End</th><th style="text-align:right">Gap Length</th></tr></thead><tbody id="idleGapsBody"><tr><td colspan="7" class="empty">No gaps found for this period</td></tr></tbody></table></div>
+        </div>
+      </div>
+      <div class="collapsible">
         <button class="collapsible-trigger" onclick="toggleCollapsible('caseLog')"><span>Detailed Case Log</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
         <div class="collapsible-content" id="caseLogContent">
-          <div class="platform-filter-row" id="casePlatformFilterRow">
-            <button class="platform-filter-btn active" data-platform="all" onclick="setCasePlatformFilter('all')">All</button>
-            <button class="platform-filter-btn" data-platform="Kount" onclick="setCasePlatformFilter('Kount')">Kount</button>
-            <button class="platform-filter-btn" data-platform="Zendesk" onclick="setCasePlatformFilter('Zendesk')">Zendesk</button>
-            <button class="platform-filter-btn" data-platform="RADAR" onclick="setCasePlatformFilter('RADAR')">RADAR</button>
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:.75rem">
+            <div class="platform-filter-row" id="casePlatformFilterRow" style="margin:0"></div>
+            <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+              <input type="text" id="caseSearchInput" class="date-input" placeholder="Search Case ID…" style="width:160px"/>
+              <button class="btn btn-outline btn-sm" onclick="exportCaseLogCSV()">⬇ Export CSV</button>
+            </div>
           </div>
           <div class="table-wrap"><table><thead><tr><th class="sortable" onclick="sortCaseTable('date')">Date ↕</th><th class="sortable" onclick="sortCaseTable('analyst')">Analyst ↕</th><th class="sortable" onclick="sortCaseTable('platform')">Platform ↕</th><th>Case ID</th><th>Source</th><th class="sortable" onclick="sortCaseTable('handle_seconds')" style="text-align:right">Handle Time ↕</th></tr></thead><tbody id="caseLogBody"><tr><td colspan="6" class="empty">No cases for this period</td></tr></tbody></table></div>
         </div>
@@ -271,6 +265,18 @@ textarea{resize:vertical;min-height:80px;}
         <button class="collapsible-trigger" onclick="toggleCollapsible('recentEdited')"><span>Recently Edited</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
         <div class="collapsible-content" id="recentEditedContent">
           <div class="table-wrap"><table><thead><tr><th>Date</th><th>Analyst</th><th>Activity</th><th>Duration</th><th>% Changed</th><th>Reason</th><th>Edited At</th></tr></thead><tbody id="editedBody"><tr><td colspan="7" class="empty">No edited entries</td></tr></tbody></table></div>
+        </div>
+      </div>
+      <div class="collapsible" id="importCard" style="display:none">
+        <button class="collapsible-trigger" onclick="toggleCollapsible('import')"><span>Import Historical Data</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="collapsible-content" id="importContent">
+          <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:1rem">Paste Toggl-exported CSV to import time entries in bulk.</p>
+          <div class="csv-drop" id="csvDropArea" onclick="document.getElementById('csvFileInput').click()">
+            <div style="font-size:2rem;margin-bottom:.5rem">📁</div><p>Click to select CSV file, or drag &amp; drop</p>
+          </div>
+          <input type="file" id="csvFileInput" accept=".csv" style="display:none"/>
+          <div id="csvFileName" style="font-size:.83rem;color:var(--text-muted);margin-top:.5rem"></div>
+          <button id="importBtn" class="btn btn-primary" style="margin-top:1rem;width:100%;display:none">⬆ Import CSV</button>
         </div>
       </div>
     </div>
@@ -296,6 +302,7 @@ textarea{resize:vertical;min-height:80px;}
           <div class="form-group"><label>Specific Date (optional)</label><input type="date" id="exportDate" class="date-input" style="width:100%"/></div>
         </div>
       </div>
+      <div id="attentionBanner"></div>
       <div id="teamContent"><div class="loading-center"><div class="spinner"></div></div></div>
     </div>
 
@@ -436,9 +443,50 @@ var state = {
   casePlatformFilter:"all", casePeriodMode:"week", casePeriodStart:null, casePeriodEnd:null,
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null,
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
-  timeLogAnalystFilter:"all", timeLogActivityFilter:"all",
+  timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
   taskChart:null, caseChart:null, isDark:false, usersList:[]
 };
+
+// ============================================================
+// FILTER PERSISTENCE — remembers case period/platform/search and the
+// analyst sub-filters across page reloads, so a supervisor's view doesn't
+// reset every time the dashboard is refreshed. Deliberately does NOT persist
+// the Reporting Period month (that already has its own "current month, or
+// most recent with data" smart default) or the header Analyst filter for
+// non-supervisors (always forced to their own name regardless).
+// ============================================================
+var FILTER_PREFS_KEY = "fps_filter_prefs";
+
+function loadFilterPrefs(){
+  try {
+    var raw = localStorage.getItem(FILTER_PREFS_KEY);
+    if (!raw) return;
+    var p = JSON.parse(raw);
+    if (p.casePeriodMode && ["today","week","month","custom"].indexOf(p.casePeriodMode)!==-1) state.casePeriodMode = p.casePeriodMode;
+    if (p.casePeriodStart) state.casePeriodStart = p.casePeriodStart;
+    if (p.casePeriodEnd) state.casePeriodEnd = p.casePeriodEnd;
+    if (p.casePlatformFilter) state.casePlatformFilter = p.casePlatformFilter;
+    if (p.caseSearchQuery) state.caseSearchQuery = p.caseSearchQuery;
+    if (p.timeLogAnalystFilter) state.timeLogAnalystFilter = p.timeLogAnalystFilter;
+    if (p.timeLogActivityFilter) state.timeLogActivityFilter = p.timeLogActivityFilter;
+    if (p.selectedAnalyst) state._savedSelectedAnalyst = p.selectedAnalyst; // applied conditionally in bootWithUser
+  } catch(e) { /* ignore corrupt/unavailable storage */ }
+}
+
+function persistFilterPrefs(){
+  try {
+    localStorage.setItem(FILTER_PREFS_KEY, JSON.stringify({
+      casePeriodMode: state.casePeriodMode,
+      casePeriodStart: state.casePeriodStart,
+      casePeriodEnd: state.casePeriodEnd,
+      casePlatformFilter: state.casePlatformFilter,
+      caseSearchQuery: state.caseSearchQuery,
+      timeLogAnalystFilter: state.timeLogAnalystFilter,
+      timeLogActivityFilter: state.timeLogActivityFilter,
+      selectedAnalyst: state.selectedAnalyst
+    }));
+  } catch(e) { /* ignore — not critical if this fails */ }
+}
 
 // ============================================================
 // INIT
@@ -466,10 +514,12 @@ function waitForGSI(cb) {
 
 function bootWithUser(user) {
   state.user = user;
+  loadFilterPrefs();
   document.getElementById("app-loading").style.display = "none";
   document.getElementById("app").style.display = "block";
   setGreeting();
   if (!state.user.isSupervisor && state.user.displayName) state.selectedAnalyst = state.user.displayName;
+  else if (state._savedSelectedAnalyst) state.selectedAnalyst = state._savedSelectedAnalyst;
   if (state.user.isSupervisor) {
     document.getElementById("analystFilter").style.display = "block";
     document.getElementById("userMgmtBtn").style.display = "block";
@@ -477,10 +527,12 @@ function bootWithUser(user) {
   document.getElementById("teamDirBtn").style.display = "block";
   document.getElementById("teamDirBtn").addEventListener("click", function(){ showView("team"); loadTeamData(); });
   document.getElementById("userMgmtBtn").addEventListener("click", function(){ showView("users"); loadUsers(); });
-  document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; applyAnalystFilter(); applyCaseFilter(); });
+  document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
   document.getElementById("monthSelect").addEventListener("change", function(){ state.selectedMonth=this.value; fetchEntries(); });
-  document.getElementById("timeLogAnalystFilter").addEventListener("change", function(){ state.timeLogAnalystFilter=this.value; renderTimeLog(); });
-  document.getElementById("timeLogActivityFilter").addEventListener("change", function(){ state.timeLogActivityFilter=this.value; renderTimeLog(); });
+  document.getElementById("timeLogAnalystFilter").addEventListener("change", function(){ state.timeLogAnalystFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
+  document.getElementById("timeLogActivityFilter").addEventListener("change", function(){ state.timeLogActivityFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
+  document.getElementById("caseSearchInput").value = state.caseSearchQuery || "";
+  document.getElementById("caseSearchInput").addEventListener("input", function(){ state.caseSearchQuery=this.value; persistFilterPrefs(); renderCaseLog(); });
   document.getElementById("signOutBtn").addEventListener("click", function(){
     clearSession();
     if (typeof google!=="undefined"&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect();
@@ -488,6 +540,7 @@ function bootWithUser(user) {
   });
   loadMonths();
   renderCasePeriodControls();
+  renderCasePlatformFilterRow();
   fetchCasesForPeriod();
   setupCSVDrop();
 }
@@ -574,6 +627,16 @@ function casePeriodLabel() {
   return b.start + " – " + b.end;
 }
 
+// The immediately-preceding period of the same length, used for the
+// period-over-period delta indicators on the case stat cards.
+function getPriorCasePeriodBounds(bounds) {
+  var start = new Date(bounds.start+"T00:00:00"), end = new Date(bounds.end+"T00:00:00");
+  var dayCount = Math.round((end.getTime()-start.getTime())/86400000) + 1;
+  var priorEnd = new Date(start.getTime() - 86400000);
+  var priorStart = new Date(priorEnd.getTime() - (dayCount-1)*86400000);
+  return { start: formatDate(priorStart), end: formatDate(priorEnd) };
+}
+
 function renderCasePeriodControls() {
   var opts = [["today","Today"],["week","This Week"],["month","This Month"],["custom","Custom"]];
   var el = document.getElementById("casePeriodControls");
@@ -583,11 +646,17 @@ function renderCasePeriodControls() {
   }).join("");
   var customRow = document.getElementById("casePeriodCustomRow");
   if (customRow) customRow.style.display = state.casePeriodMode === "custom" ? "flex" : "none";
+  if (state.casePeriodMode === "custom") {
+    var startInput = document.getElementById("casePeriodStart"), endInput = document.getElementById("casePeriodEnd");
+    if (startInput && state.casePeriodStart) startInput.value = state.casePeriodStart;
+    if (endInput && state.casePeriodEnd) endInput.value = state.casePeriodEnd;
+  }
 }
 
 function setCasePeriod(mode) {
   state.casePeriodMode = mode;
   renderCasePeriodControls();
+  persistFilterPrefs();
   if (mode === "custom") {
     var startInput = document.getElementById("casePeriodStart"), endInput = document.getElementById("casePeriodEnd");
     if (startInput && endInput && (!startInput.value || !endInput.value)) {
@@ -605,21 +674,33 @@ function applyCasePeriodCustom() {
   if (!s || !e) { toast("error","Please select both start and end dates"); return; }
   if (s > e) { toast("error","Start date must be before end date"); return; }
   state.casePeriodStart = s; state.casePeriodEnd = e;
+  persistFilterPrefs();
   fetchCasesForPeriod();
 }
 
 function fetchCasesForPeriod() {
   var b = getCasePeriodBounds();
+  var pb = getPriorCasePeriodBounds(b);
   document.getElementById("casePeriodDesc").textContent = "Showing cases for " + casePeriodLabel();
-  apiGet("getCaseEntries",{start:b.start,end:b.end}).then(function(data){
-    state.allRangeCases=(data&&!data.error)?data:[]; applyCaseFilter();
-  }).catch(function(){ state.allRangeCases=[]; applyCaseFilter(); });
+  Promise.all([
+    apiGet("getCaseEntries",{start:b.start,end:b.end}),
+    apiGet("getCaseEntries",{start:pb.start,end:pb.end})
+  ]).then(function(results){
+    state.allRangeCases=(results[0]&&!results[0].error)?results[0]:[];
+    state.allPriorRangeCases=(results[1]&&!results[1].error)?results[1]:[];
+    applyCaseFilter();
+  }).catch(function(){ state.allRangeCases=[]; state.allPriorRangeCases=[]; applyCaseFilter(); });
+}
+
+function filterCasesForCurrentScope(cases) {
+  if (!state.user.isSupervisor&&state.user.displayName) return cases.filter(function(c){return c.analyst===state.user.displayName;});
+  if (state.selectedAnalyst==="all") return cases;
+  return cases.filter(function(c){return c.analyst===state.selectedAnalyst;});
 }
 
 function applyCaseFilter() {
-  if (!state.user.isSupervisor&&state.user.displayName) state.cases=state.allRangeCases.filter(function(c){return c.analyst===state.user.displayName;});
-  else if (state.selectedAnalyst==="all") state.cases=state.allRangeCases;
-  else state.cases=state.allRangeCases.filter(function(c){return c.analyst===state.selectedAnalyst;});
+  state.cases = filterCasesForCurrentScope(state.allRangeCases);
+  state.priorCases = filterCasesForCurrentScope(state.allPriorRangeCases||[]);
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
 }
 
@@ -628,7 +709,7 @@ function applyAnalystFilter() {
   else if (state.selectedAnalyst==="all") state.entries=state.allMonthEntries;
   else state.entries=state.allMonthEntries.filter(function(e){return e.analyst===state.selectedAnalyst;});
   updateTimeLogFilterOptions();
-  renderStats(); renderAnalystTable(); renderTimeLog(); renderEditedSection(); renderChart(); renderCaseStats();
+  renderStats(); renderAnalystTable(); renderTimeLog(); renderEditedSection(); renderChart(); renderCaseStats(); renderIdleGaps();
 }
 
 function renderStats() {
@@ -645,15 +726,33 @@ function renderStats() {
   document.getElementById("statsGrid").innerHTML=cards.map(function(c){return '<div class="stat-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("");
 }
 
+// Small ▲/▼ badge comparing a current value to the prior period's value.
+// For case counts, direction is neutral (more isn't inherently good or bad).
+// For AHT, lower is better (faster), so a drop renders green and a rise red.
+function deltaBadge(curVal, priorVal, lowerIsBetter) {
+  if (curVal==null || priorVal==null || !priorVal) return "";
+  var diff = curVal - priorVal;
+  if (diff === 0) return "";
+  var pct = Math.round((diff/priorVal)*100);
+  var arrow = diff>0 ? "▲" : "▼";
+  var color = "var(--text-muted)";
+  if (lowerIsBetter) color = diff<0 ? "hsl(142,60%,40%)" : "hsl(0,65%,50%)";
+  return ' <span style="color:'+color+';-webkit-text-fill-color:'+color+';font-size:.72rem;font-weight:700">'+arrow+' '+Math.abs(pct)+'%</span>';
+}
+
 function renderCaseStats() {
   var inRange=state.cases; // already scoped to the selected case period (Today/Week/Month/Custom)
+  var prior=state.priorCases||[];
   var kc=inRange.filter(function(c){return c.platform==='Kount';}), zc=inRange.filter(function(c){return c.platform==='Zendesk';}), rc=inRange.filter(function(c){return c.platform==='RADAR';});
   var ka=ahtFromCases(kc), za=ahtFromCases(zc), ra=ahtFromCases(rc);
+  var pka=ahtFromCases(prior.filter(function(c){return c.platform==='Kount';}));
+  var pza=ahtFromCases(prior.filter(function(c){return c.platform==='Zendesk';}));
+  var pra=ahtFromCases(prior.filter(function(c){return c.platform==='RADAR';}));
   var cards=[
-    {label:"Cases ("+casePeriodLabel()+")",value:String(inRange.length),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")},
-    {label:"Kount AHT",value:fmtSeconds(ka.avgSec),sub:ka.count?"over "+ka.count+" case"+(ka.count===1?"":"s"):"no timed cases yet"},
-    {label:"Zendesk AHT",value:fmtSeconds(za.avgSec),sub:za.count?"over "+za.count+" case"+(za.count===1?"":"s"):"no timed cases yet"},
-    {label:"RADAR AHT",value:fmtSeconds(ra.avgSec),sub:ra.count?"over "+ra.count+" case"+(ra.count===1?"":"s"):"no timed cases yet"}
+    {label:"Cases ("+casePeriodLabel()+")",value:String(inRange.length)+deltaBadge(inRange.length,prior.length,null),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")+" · vs. prior period: "+prior.length},
+    {label:"Kount AHT",value:fmtSeconds(ka.avgSec)+deltaBadge(ka.avgSec,pka.avgSec,true),sub:ka.count?"over "+ka.count+" case"+(ka.count===1?"":"s"):"no timed cases yet"},
+    {label:"Zendesk AHT",value:fmtSeconds(za.avgSec)+deltaBadge(za.avgSec,pza.avgSec,true),sub:za.count?"over "+za.count+" case"+(za.count===1?"":"s"):"no timed cases yet"},
+    {label:"RADAR AHT",value:fmtSeconds(ra.avgSec)+deltaBadge(ra.avgSec,pra.avgSec,true),sub:ra.count?"over "+ra.count+" case"+(ra.count===1?"":"s"):"no timed cases yet"}
   ];
   var g=document.getElementById("caseStatsGrid");
   if (g) g.innerHTML=cards.map(function(c){return '<div class="stat-card case-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("");
@@ -677,21 +776,76 @@ function renderCaseAnalystTable() {
   document.getElementById("caseAnalystTable").innerHTML=rows.length===0?'<div class="empty">No cases for this period</div>':rows.map(function(r){return '<div class="analyst-row"><span class="analyst-name">'+esc(r.name)+'</span><span class="case-stack"><span class="count">'+r.count+' case'+(r.count===1?"":"s")+'</span><span class="aht">AHT: '+fmtSeconds(r.avgSec)+'</span></span></div>';}).join("");
 }
 
+function renderCasePlatformFilterRow() {
+  var opts = [["all","All"],["Kount","Kount"],["Zendesk","Zendesk"],["RADAR","RADAR"]];
+  var row = document.getElementById("casePlatformFilterRow");
+  if (!row) return;
+  row.innerHTML = opts.map(function(o){
+    return '<button class="platform-filter-btn'+(state.casePlatformFilter===o[0]?' active':'')+'" data-platform="'+o[0]+'" onclick="setCasePlatformFilter(\''+o[0]+'\')">'+o[1]+'</button>';
+  }).join("");
+}
+
 function setCasePlatformFilter(platform) {
   state.casePlatformFilter = platform;
-  var row = document.getElementById("casePlatformFilterRow");
-  if (row) {
-    Array.prototype.forEach.call(row.querySelectorAll(".platform-filter-btn"), function(btn){
-      btn.classList.toggle("active", btn.getAttribute("data-platform") === platform);
-    });
-  }
+  renderCasePlatformFilterRow();
+  persistFilterPrefs();
   renderCaseLog();
+}
+
+// Flags a case's handle time as a statistical outlier relative to its
+// platform's timed cases in the currently visible range — 2+ standard
+// deviations from the mean, with a minimum sample size so small case
+// counts don't get flagged off noise.
+function computeCaseOutlierFlags(cases) {
+  var flags = {}; // case_id+platform+date -> {dir, times}
+  ["Kount","Zendesk","RADAR"].forEach(function(platform){
+    var timed = cases.filter(function(c){ return c.platform===platform && typeof c.handle_seconds==="number" && c.handle_seconds>0; });
+    if (timed.length < 5) return; // not enough data to judge outliers
+    var mean = timed.reduce(function(a,c){return a+c.handle_seconds;},0)/timed.length;
+    var variance = timed.reduce(function(a,c){return a+Math.pow(c.handle_seconds-mean,2);},0)/timed.length;
+    var stddev = Math.sqrt(variance);
+    if (stddev <= 0) return;
+    timed.forEach(function(c){
+      var z = (c.handle_seconds-mean)/stddev;
+      if (Math.abs(z) >= 2) {
+        var key = c.platform+"|"+c.case_id+"|"+c.date;
+        flags[key] = { dir: z>0?"high":"low", times: (c.handle_seconds/mean).toFixed(1) };
+      }
+    });
+  });
+  return flags;
 }
 
 function renderCaseLog() {
   var filtered = state.casePlatformFilter === "all" ? state.cases : state.cases.filter(function(c){ return c.platform === state.casePlatformFilter; });
+  var q = (state.caseSearchQuery||"").trim().toLowerCase();
+  if (q) filtered = filtered.filter(function(c){ return String(c.case_id||"").toLowerCase().indexOf(q)!==-1; });
   var sorted=filtered.slice().sort(function(a,b){var f=state.caseSortField,dir=state.caseSortDir==="asc"?1:-1,av=a[f],bv=b[f];if(typeof av==="number"||typeof bv==="number")return((av||0)-(bv||0))*dir;return String(av||"").localeCompare(String(bv||""))*dir;});
-  document.getElementById("caseLogBody").innerHTML=sorted.length===0?'<tr><td colspan="6" class="empty">No cases for this period</td></tr>':sorted.map(function(c){var pc=c.platform==='Kount'?'badge-kount':c.platform==='Zendesk'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':'';return '<tr><td>'+esc(c.date)+'</td><td>'+esc(c.analyst)+'</td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+esc(c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+fmtSeconds(c.handle_seconds)+'</td></tr>';}).join("");
+  var outliers = computeCaseOutlierFlags(state.cases); // flag against the whole visible period/platform set, not just the search/sort result
+  document.getElementById("caseLogBody").innerHTML=sorted.length===0?'<tr><td colspan="6" class="empty">No cases match filters</td></tr>':sorted.map(function(c){
+    var pc=c.platform==='Kount'?'badge-kount':c.platform==='Zendesk'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':'';
+    var flag = outliers[c.platform+"|"+c.case_id+"|"+c.date];
+    var flagBadge = "";
+    if (flag) {
+      var color = flag.dir==="high" ? "hsl(0,70%,55%)" : "hsl(200,80%,55%)";
+      var title = flag.dir==="high" ? (flag.times+"x the platform average — much slower than usual") : (flag.times+"x the platform average — much faster than usual");
+      flagBadge = ' <span data-tooltip="'+esc(title)+'" style="display:inline-block;width:.5rem;height:.5rem;border-radius:50%;background:'+color+';margin-left:.4rem;vertical-align:middle"></span>';
+    }
+    return '<tr><td>'+esc(c.date)+'</td><td>'+esc(c.analyst)+'</td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+esc(c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+fmtSeconds(c.handle_seconds)+flagBadge+'</td></tr>';
+  }).join("");
+}
+
+function exportCaseLogCSV(){
+  var filtered = state.casePlatformFilter === "all" ? state.cases : state.cases.filter(function(c){ return c.platform === state.casePlatformFilter; });
+  var q = (state.caseSearchQuery||"").trim().toLowerCase();
+  if (q) filtered = filtered.filter(function(c){ return String(c.case_id||"").toLowerCase().indexOf(q)!==-1; });
+  if (!filtered.length) { toast("error","No cases to export"); return; }
+  var headers=["Date","Analyst","Platform","Case ID","Source","Handle Time (seconds)","Handle Time"];
+  var rows=filtered.map(function(c){return [c.date,c.analyst,c.platform,c.case_id,c.source||"",c.handle_seconds!=null?c.handle_seconds:"",fmtSeconds(c.handle_seconds)];});
+  var csv=[headers,...rows].map(function(r){return r.map(function(v){v=String(v||"");return v.includes(",")||v.includes('"')?'"'+v.replace(/"/g,'""')+'"':v;}).join(",");}).join("\n");
+  var b = getCasePeriodBounds();
+  var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="case_log_"+b.start+"_to_"+b.end+".csv";a.click();
+  toast("success","Exported "+filtered.length+" cases");
 }
 
 function sortCaseTable(field){state.caseSortDir=state.caseSortField===field?(state.caseSortDir==="asc"?"desc":"asc"):"asc";state.caseSortField=field;renderCaseLog();}
@@ -743,6 +897,57 @@ function renderTimeLog(){
 function sortEntries(arr){return arr.slice().sort(function(a,b){var av=a[state.sortField],bv=b[state.sortField];if(typeof av==="number")return state.sortDir==="asc"?av-bv:bv-av;return state.sortDir==="asc"?String(av||"").localeCompare(String(bv||"")):String(bv||"").localeCompare(String(av||""));});}
 function sortTable(field){state.sortDir=state.sortField===field?(state.sortDir==="asc"?"desc":"asc"):"asc";state.sortField=field;renderTimeLog();}
 
+// ============================================================
+// IDLE TIME GAPS — flags unaccounted-for time between consecutive logged
+// activities (same analyst, same day) where nothing was logged to cover it —
+// often a better "something's off" signal than raw handle time.
+// ============================================================
+var IDLE_GAP_THRESHOLD_SEC = 600; // 10 minutes
+
+function parseEntryTimeMs(date, utcTime) {
+  if (!utcTime) return null;
+  try {
+    var d = String(utcTime).indexOf("T")!==-1 ? new Date(utcTime) : new Date(date+"T"+utcTime+"Z");
+    var t = d.getTime();
+    return isNaN(t) ? null : t;
+  } catch(e) { return null; }
+}
+
+function computeIdleGaps(entries) {
+  var byKey = {};
+  entries.forEach(function(e){
+    var startMs = parseEntryTimeMs(e.date, e.start_time), endMs = parseEntryTimeMs(e.date, e.end_time);
+    if (startMs==null || endMs==null) return;
+    var key = e.analyst+"|"+e.date;
+    (byKey[key] = byKey[key]||[]).push({ task:e.task, startMs:startMs, endMs:endMs, analyst:e.analyst, date:e.date });
+  });
+  var gaps = [];
+  Object.keys(byKey).forEach(function(key){
+    var list = byKey[key].sort(function(a,b){ return a.startMs - b.startMs; });
+    for (var i=0;i<list.length-1;i++){
+      var gapMs = list[i+1].startMs - list[i].endMs;
+      if (gapMs > IDLE_GAP_THRESHOLD_SEC*1000) {
+        gaps.push({
+          analyst: list[i].analyst, date: list[i].date,
+          afterTask: list[i].task, beforeTask: list[i+1].task,
+          gapStartMs: list[i].endMs, gapEndMs: list[i+1].startMs,
+          gapSec: Math.round(gapMs/1000)
+        });
+      }
+    }
+  });
+  return gaps.sort(function(a,b){ return b.gapSec - a.gapSec; });
+}
+
+function renderIdleGaps() {
+  var el = document.getElementById("idleGapsBody");
+  if (!el) return;
+  var gaps = computeIdleGaps(state.entries).slice(0, 100); // cap so a bad period doesn't render an enormous table
+  el.innerHTML = gaps.length===0 ? '<tr><td colspan="7" class="empty">No gaps found for this period</td></tr>' : gaps.map(function(g){
+    return '<tr><td>'+esc(g.date)+'</td><td><span class="badge">'+esc(g.analyst)+'</span></td><td>'+esc(g.afterTask)+'</td><td>'+esc(g.beforeTask)+'</td><td>'+new Date(g.gapStartMs).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit",hour12:true})+'</td><td>'+new Date(g.gapEndMs).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit",hour12:true})+'</td><td style="text-align:right;font-weight:600">'+fmtDuration(g.gapSec)+'</td></tr>';
+  }).join("");
+}
+
 function renderEditedSection(){
   var edited=state.allMonthEntries.filter(function(e){return e.edited_at&&e.edit_reason;}).sort(function(a,b){return new Date(b.edited_at)-new Date(a.edited_at);}).slice(0,10);
   document.getElementById("editedBody").innerHTML=edited.length===0?'<tr><td colspan="7" class="empty">No edited entries</td></tr>':edited.map(function(e){var pct="–";if(e.original_duration&&e.original_duration!==e.duration)pct=((Math.abs(e.duration-e.original_duration)/e.original_duration)*100).toFixed(1)+"%";return '<tr><td>'+esc(e.date)+'</td><td>'+esc(e.analyst)+'</td><td>'+esc(e.task)+'</td><td>'+fmtDuration(e.duration)+'</td><td>'+pct+'</td><td><span class="badge">'+esc(e.edit_reason)+'</span></td><td style="color:var(--text-muted)">'+fmtDateTime(e.edited_at)+'</td></tr>';}).join("");
@@ -752,7 +957,9 @@ function updateAnalystFilterOptions(){
   if(!state.user.isSupervisor)return;
   var analysts=[...new Set(state.allMonthEntries.map(function(e){return e.analyst;}))].sort();
   var sel=document.getElementById("analystFilter");sel.innerHTML='<option value="all">All Analysts</option>';
-  analysts.forEach(function(a){var o=document.createElement("option");o.value=a;o.textContent=a;sel.appendChild(o);});sel.value=state.selectedAnalyst;
+  analysts.forEach(function(a){var o=document.createElement("option");o.value=a;o.textContent=a;sel.appendChild(o);});
+  if(state.selectedAnalyst!=="all"&&analysts.indexOf(state.selectedAnalyst)===-1) state.selectedAnalyst="all";
+  sel.value=state.selectedAnalyst;
 }
 
 function openEditModal(id){
@@ -809,8 +1016,71 @@ function renderSupervisorFilters(assignments){
 
 function setSupervisorFilter(email){state.selectedSupervisor=email;renderSupervisorFilters(state.teamData.assignments||[]);renderTeamContent(state.teamData);}
 
+// Auto-surfaces analysts worth a second look: logged case-queue time on a
+// day but recorded zero cases that day, or an AHT well above the team
+// average for a platform. Min sample sizes keep this quiet on small/noisy
+// datasets rather than flagging things that are just statistical noise.
+function computeAttentionFlags(assignments, allEntries, allCases) {
+  var flags = [];
+  var validNames = {}; assignments.forEach(function(a){ validNames[a.analyst_name]=true; });
+  var entries = (allEntries||[]).filter(function(e){ return validNames[e.analyst]; });
+  var cases = (allCases||[]).filter(function(c){ return validNames[c.analyst]; });
+
+  var caseTaskNames = Object.keys(PLATFORM_TASK_MAP).map(function(k){ return PLATFORM_TASK_MAP[k]; });
+  var casesByAnalystDate = {};
+  cases.forEach(function(c){ var k=c.analyst+"|"+c.date; casesByAnalystDate[k]=(casesByAnalystDate[k]||0)+1; });
+  var loggedCaseDays = {};
+  entries.forEach(function(e){
+    if (caseTaskNames.indexOf(e.task)===-1) return;
+    if (!(e.duration>0)) return;
+    loggedCaseDays[e.analyst+"|"+e.date] = true;
+  });
+  Object.keys(loggedCaseDays).forEach(function(key){
+    if (!casesByAnalystDate[key]) {
+      var parts = key.split("|");
+      flags.push({ analyst:parts[0], message:"logged case-queue time on "+parts[1]+" but recorded 0 cases that day" });
+    }
+  });
+
+  ["Kount","Zendesk","RADAR"].forEach(function(platform){
+    var teamTimed = cases.filter(function(c){ return c.platform===platform && typeof c.handle_seconds==="number" && c.handle_seconds>0; });
+    if (teamTimed.length < 5) return; // not enough team data to judge
+    var teamAvg = teamTimed.reduce(function(a,c){return a+c.handle_seconds;},0)/teamTimed.length;
+    var byAnalyst = {};
+    teamTimed.forEach(function(c){ (byAnalyst[c.analyst]=byAnalyst[c.analyst]||[]).push(c.handle_seconds); });
+    Object.keys(byAnalyst).forEach(function(name){
+      var arr = byAnalyst[name];
+      if (arr.length < 3) return; // not enough individual samples
+      var avg = arr.reduce(function(a,b){return a+b;},0)/arr.length;
+      if (avg > teamAvg*1.5) {
+        flags.push({ analyst:name, message:platform+" AHT ("+fmtSeconds(avg)+") is well above the team average ("+fmtSeconds(teamAvg)+")" });
+      }
+    });
+  });
+
+  return flags;
+}
+
+function renderAttentionBanner(assignments, entries, cases) {
+  var el = document.getElementById("attentionBanner");
+  if (!el) return;
+  var flags = computeAttentionFlags(assignments, entries, cases);
+  if (!flags.length) { el.innerHTML = ""; return; }
+  el.innerHTML = '<div class="card" style="border-left:4px solid hsl(45,90%,45%);margin-bottom:1.25rem">'
+    + '<div class="card-header"><h2>⚠️ Needs Attention</h2></div>'
+    + '<div class="card-body" style="display:flex;flex-direction:column;gap:.5rem">'
+    + flags.map(function(f){
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.5rem .75rem;background:var(--muted-bg);border-radius:.5rem">'
+          + '<span style="font-size:.85rem"><strong>'+esc(f.analyst)+'</strong> — '+esc(f.message)+'</span>'
+          + '<button class="btn btn-outline btn-sm" onclick="viewAnalystDetail(\''+esc(f.analyst)+'\')">View</button>'
+          + '</div>';
+      }).join("")
+    + '</div></div>';
+}
+
 function renderTeamContent(data){
   var assignments=(data.assignments||[]).filter(function(a){if(!state.user.isSupervisor)return a.analyst_name===state.user.displayName;return!state.selectedSupervisor||a.supervisor_email===state.selectedSupervisor;});
+  renderAttentionBanner(assignments, data.entries, data.cases);
   if(!assignments.length){document.getElementById("teamContent").innerHTML='<div class="card"><div class="empty" style="padding:3rem">No team assignments found</div></div>';return;}
   var allCases=data.cases||[],groups={};
   assignments.forEach(function(a){var key=a.team_name||a.supervisor_email;if(!groups[key])groups[key]={label:key,members:[]};var me=data.entries.filter(function(e){return e.analyst===a.analyst_name;}),mc=allCases.filter(function(c){return c.analyst===a.analyst_name;}),aht=ahtFromCases(mc);groups[key].members.push({name:a.analyst_name,role:a.role||"PI Analyst",totalSecs:sum(me,"duration"),util:calcUtilization(me),lastEntry:me.length?me.sort(function(a,b){return b.date.localeCompare(a.date);})[0].date:null,caseCount:mc.length,ahtSec:aht.avgSec});});
