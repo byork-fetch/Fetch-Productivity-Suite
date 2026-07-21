@@ -248,6 +248,10 @@ textarea{resize:vertical;min-height:80px;}
       <div class="collapsible">
         <button class="collapsible-trigger" onclick="toggleCollapsible('timeLog')"><span>Detailed Time Log</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
         <div class="collapsible-content" id="timeLogContent">
+          <div class="export-filters-grid" style="margin-bottom:1rem">
+            <div class="form-group"><label>Analyst</label><select id="timeLogAnalystFilter" class="form-select"><option value="all">All Analysts</option></select></div>
+            <div class="form-group"><label>Activity / Status</label><select id="timeLogActivityFilter" class="form-select"><option value="all">All Activities</option></select></div>
+          </div>
           <div class="table-wrap"><table><thead><tr><th class="sortable" onclick="sortTable('date')">Date ↕</th><th class="sortable" onclick="sortTable('analyst')">Analyst ↕</th><th class="sortable" onclick="sortTable('task')">Activity ↕</th><th>Start</th><th>End</th><th class="sortable" onclick="sortTable('duration')" style="text-align:right">Duration ↕</th><th style="width:40px"></th></tr></thead><tbody id="timeLogBody"><tr><td colspan="7" class="empty">Select a reporting period</td></tr></tbody></table></div>
         </div>
       </div>
@@ -432,6 +436,7 @@ var state = {
   casePlatformFilter:"all", casePeriodMode:"week", casePeriodStart:null, casePeriodEnd:null,
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null,
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
+  timeLogAnalystFilter:"all", timeLogActivityFilter:"all",
   taskChart:null, caseChart:null, isDark:false, usersList:[]
 };
 
@@ -474,6 +479,8 @@ function bootWithUser(user) {
   document.getElementById("userMgmtBtn").addEventListener("click", function(){ showView("users"); loadUsers(); });
   document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; applyAnalystFilter(); applyCaseFilter(); });
   document.getElementById("monthSelect").addEventListener("change", function(){ state.selectedMonth=this.value; fetchEntries(); });
+  document.getElementById("timeLogAnalystFilter").addEventListener("change", function(){ state.timeLogAnalystFilter=this.value; renderTimeLog(); });
+  document.getElementById("timeLogActivityFilter").addEventListener("change", function(){ state.timeLogActivityFilter=this.value; renderTimeLog(); });
   document.getElementById("signOutBtn").addEventListener("click", function(){
     clearSession();
     if (typeof google!=="undefined"&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect();
@@ -620,6 +627,7 @@ function applyAnalystFilter() {
   if (!state.user.isSupervisor&&state.user.displayName) state.entries=state.allMonthEntries.filter(function(e){return e.analyst===state.user.displayName;});
   else if (state.selectedAnalyst==="all") state.entries=state.allMonthEntries;
   else state.entries=state.allMonthEntries.filter(function(e){return e.analyst===state.selectedAnalyst;});
+  updateTimeLogFilterOptions();
   renderStats(); renderAnalystTable(); renderTimeLog(); renderEditedSection(); renderChart(); renderCaseStats();
 }
 
@@ -705,9 +713,27 @@ function renderChart(){
   state.taskChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:labels.map(function(_,i){return colors[i%colors.length];}),borderRadius:6}]},options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return " "+fmtDurationShort(Math.round(ctx.raw*3600));}}}},scales:{x:{title:{display:true,text:"Hours"},ticks:{color:state.isDark?"#ccc":"#555"}},y:{grid:{display:false},ticks:{color:state.isDark?"#ccc":"#555",font:{size:11}}}},responsive:true,maintainAspectRatio:false}});
 }
 
+function updateTimeLogFilterOptions(){
+  var analystSel=document.getElementById("timeLogAnalystFilter"), activitySel=document.getElementById("timeLogActivityFilter");
+  if(!analystSel||!activitySel) return;
+  var analysts=[...new Set(state.entries.map(function(e){return e.analyst;}))].sort();
+  var activities=[...new Set(state.entries.map(function(e){return e.task;}))].sort();
+  var keepAnalyst=analysts.indexOf(state.timeLogAnalystFilter)!==-1?state.timeLogAnalystFilter:"all";
+  var keepActivity=activities.indexOf(state.timeLogActivityFilter)!==-1?state.timeLogActivityFilter:"all";
+  state.timeLogAnalystFilter=keepAnalyst; state.timeLogActivityFilter=keepActivity;
+  analystSel.innerHTML='<option value="all">All Analysts</option>'+analysts.map(function(a){return '<option value="'+esc(a)+'">'+esc(a)+'</option>';}).join("");
+  activitySel.innerHTML='<option value="all">All Activities</option>'+activities.map(function(t){return '<option value="'+esc(t)+'">'+esc(t)+'</option>';}).join("");
+  analystSel.value=keepAnalyst; activitySel.value=keepActivity;
+}
+
 function renderTimeLog(){
-  var sorted=sortEntries(state.entries);
-  document.getElementById("timeLogBody").innerHTML=sorted.length===0?'<tr><td colspan="7" class="empty">No entries for this period</td></tr>':sorted.map(function(e){
+  var filtered=state.entries.filter(function(e){
+    if(state.timeLogAnalystFilter!=="all"&&e.analyst!==state.timeLogAnalystFilter) return false;
+    if(state.timeLogActivityFilter!=="all"&&e.task!==state.timeLogActivityFilter) return false;
+    return true;
+  });
+  var sorted=sortEntries(filtered);
+  document.getElementById("timeLogBody").innerHTML=sorted.length===0?'<tr><td colspan="7" class="empty">No entries match filters</td></tr>':sorted.map(function(e){
     var editBtn=(state.user.isSupervisor||e.analyst===state.user.displayName)?'<button class="edit-btn" onclick="openEditModal(\''+e.id+'\')" title="Edit">✎</button>':"";
     var editedNote=e.edit_reason?' <span data-tooltip="'+esc(e.edit_reason)+'" style="font-size:.75rem;color:var(--text-muted);font-style:italic">(edited)</span>':"";
     return '<tr><td>'+esc(e.date)+'</td><td><span class="badge">'+esc(e.analyst)+'</span></td><td>'+esc(e.task)+editedNote+'</td><td>'+(e.start_time?fmtTimeDisplay(e.date,e.start_time):"–")+'</td><td>'+(e.end_time?fmtTimeDisplay(e.date,e.end_time):"–")+'</td><td style="text-align:right;font-weight:600">'+fmtDuration(e.duration)+'</td><td>'+editBtn+'</td></tr>';
