@@ -122,7 +122,7 @@ textarea{resize:vertical;min-height:80px;}
 .platform-filter-row{display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap;}
 .platform-filter-btn{padding:.4rem 1rem;border-radius:99px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:.82rem;cursor:pointer;font-weight:600;transition:all .2s;}
 .platform-filter-btn:hover:not(.active){background:var(--muted-bg);}
-.platform-filter-btn.active{color:#fff;border-color:transparent;}
+.platform-filter-btn.active{color:#fff;border-color:transparent;background:var(--gradient-btn);}
 .platform-filter-btn.active[data-platform="all"]{background:var(--gradient-btn);}
 .platform-filter-btn.active[data-platform="Kount"]{background:hsl(220,80%,55%);}
 .platform-filter-btn.active[data-platform="Zendesk"]{background:hsl(160,55%,40%);}
@@ -224,7 +224,18 @@ textarea{resize:vertical;min-height:80px;}
           <div class="card-body"><div class="analyst-table" id="analystTable"><div class="empty">Select a reporting period</div></div></div>
         </div>
       </div>
-      <h2 class="section-heading">🛡️ PI Cases</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:.4rem">
+        <h2 class="section-heading" style="margin:0">🛡️ PI Cases</h2>
+        <div class="platform-filter-row" id="casePeriodControls" style="margin:0"></div>
+      </div>
+      <div class="date-range-row" id="casePeriodCustomRow" style="display:none">
+        <label>Custom range:</label>
+        <input type="date" id="casePeriodStart" class="date-input"/>
+        <span style="color:var(--text-muted)">to</span>
+        <input type="date" id="casePeriodEnd" class="date-input"/>
+        <button class="btn btn-primary btn-sm" onclick="applyCasePeriodCustom()">Apply</button>
+      </div>
+      <p id="casePeriodDesc" style="font-size:.8rem;color:var(--text-muted);margin:-0.5rem 0 1rem"></p>
       <div class="main-grid">
         <div class="left-col">
           <div class="card"><div class="card-header"><h2>Cases by Platform</h2></div><div class="card-body chart-wrap"><canvas id="caseChart"></canvas></div></div>
@@ -331,6 +342,7 @@ textarea{resize:vertical;min-height:80px;}
   <div class="modal" style="max-width:900px;max-height:80vh">
     <div class="modal-header"><button class="modal-close" onclick="document.getElementById('quickViewModal').classList.remove('open')">×</button><h2>Filtered Entries</h2><p id="quickViewMeta"></p></div>
     <div class="modal-body" style="padding:0;overflow:auto">
+      <div id="quickViewPlatformBreakdown"></div>
       <div class="table-wrap" style="border:none;border-radius:0;overflow:visible"><table><thead><tr><th>Date</th><th>Analyst</th><th>Activity</th><th>Start</th><th>End</th><th style="text-align:right">Duration</th></tr></thead><tbody id="quickViewBody"></tbody></table></div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="document.getElementById('quickViewModal').classList.remove('open')">Close</button></div>
@@ -413,10 +425,10 @@ function showLoginError(msg) { var el=document.getElementById("loginError"); el.
 // STATE
 // ============================================================
 var state = {
-  user:null, entries:[], allMonthEntries:[], allMonthCases:[], cases:[],
+  user:null, entries:[], allMonthEntries:[], allRangeCases:[], cases:[],
   selectedMonth:"", selectedAnalyst:"all", sortField:"date", sortDir:"desc",
   caseSortField:"date", caseSortDir:"desc", editEntry:null,
-  casePlatformFilter:"all",
+  casePlatformFilter:"all", casePeriodMode:"week", casePeriodStart:null, casePeriodEnd:null,
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null,
   taskChart:null, caseChart:null, isDark:false, usersList:[]
 };
@@ -459,13 +471,15 @@ function bootWithUser(user) {
   document.getElementById("teamDirBtn").addEventListener("click", function(){ showView("team"); loadTeamData(); });
   document.getElementById("userMgmtBtn").addEventListener("click", function(){ showView("users"); loadUsers(); });
   document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; applyAnalystFilter(); applyCaseFilter(); });
-  document.getElementById("monthSelect").addEventListener("change", function(){ state.selectedMonth=this.value; fetchEntries(); fetchCaseEntries(); });
+  document.getElementById("monthSelect").addEventListener("change", function(){ state.selectedMonth=this.value; fetchEntries(); });
   document.getElementById("signOutBtn").addEventListener("click", function(){
     clearSession();
     if (typeof google!=="undefined"&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect();
     window.location.reload();
   });
   loadMonths();
+  renderCasePeriodControls();
+  fetchCasesForPeriod();
   setupCSVDrop();
 }
 
@@ -492,7 +506,7 @@ function loadMonths() {
   state.selectedMonth = cur;
   var sel = document.getElementById("monthSelect");
   sel.innerHTML = '<option value="'+cur+'">'+formatMonthLabel(cur)+'</option>';
-  fetchEntries(); fetchCaseEntries();
+  fetchEntries();
 
   apiGet("getAvailableMonths").then(function(months) {
     if (!months||months.error||months.length===0) return; // current month already showing, nothing to correct
@@ -501,7 +515,7 @@ function loadMonths() {
     if (months.indexOf(cur) === -1) {
       // No entries for the current month yet — switch to the most recent month with data.
       state.selectedMonth = months[0]; sel.value = months[0];
-      fetchEntries(); fetchCaseEntries();
+      fetchEntries();
     } else {
       sel.value = cur;
     }
@@ -523,19 +537,80 @@ function fetchEntries() {
   }).catch(function(err){toast("error","Failed: "+err);});
 }
 
-function fetchCaseEntries() {
-  if (!state.selectedMonth) return;
-  var p=state.selectedMonth.split("-"), year=parseInt(p[0]), month=parseInt(p[1]);
-  var start=new Date(year,month-1,1), end=new Date(year,month,0);
-  apiGet("getCaseEntries",{start:formatDate(start),end:formatDate(end)}).then(function(data){
-    state.allMonthCases=(data&&!data.error)?data:[]; applyCaseFilter();
-  }).catch(function(){ state.allMonthCases=[]; applyCaseFilter(); });
+// ============================================================
+// CASE PERIOD — decoupled from the Reporting Period month selector.
+// Cases (and their AHT) are filtered by their own Today/Week/Month/Custom
+// range so supervisors can look at raw per-case numbers over whatever
+// window is actually relevant, instead of being stuck on a fixed "this
+// week" average or tied to the time-tracker's month view.
+// ============================================================
+function getCasePeriodBounds() {
+  var now = new Date();
+  if (state.casePeriodMode === "today") { var d=formatDate(now); return { start:d, end:d }; }
+  if (state.casePeriodMode === "week")  { return { start:formatDate(getWeekStart(now)), end:formatDate(getWeekEnd(now)) }; }
+  if (state.casePeriodMode === "month") {
+    var first=new Date(now.getFullYear(),now.getMonth(),1), last=new Date(now.getFullYear(),now.getMonth()+1,0);
+    return { start:formatDate(first), end:formatDate(last) };
+  }
+  // custom
+  var s = state.casePeriodStart || formatDate(now), e = state.casePeriodEnd || formatDate(now);
+  return { start:s, end:e };
+}
+
+function casePeriodLabel() {
+  if (state.casePeriodMode === "today") return "Today";
+  if (state.casePeriodMode === "week")  return "This Week";
+  if (state.casePeriodMode === "month") return "This Month";
+  var b = getCasePeriodBounds();
+  return b.start + " – " + b.end;
+}
+
+function renderCasePeriodControls() {
+  var opts = [["today","Today"],["week","This Week"],["month","This Month"],["custom","Custom"]];
+  var el = document.getElementById("casePeriodControls");
+  if (!el) return;
+  el.innerHTML = opts.map(function(o){
+    return '<button class="platform-filter-btn'+(state.casePeriodMode===o[0]?' active':'')+'" onclick="setCasePeriod(\''+o[0]+'\')">'+o[1]+'</button>';
+  }).join("");
+  var customRow = document.getElementById("casePeriodCustomRow");
+  if (customRow) customRow.style.display = state.casePeriodMode === "custom" ? "flex" : "none";
+}
+
+function setCasePeriod(mode) {
+  state.casePeriodMode = mode;
+  renderCasePeriodControls();
+  if (mode === "custom") {
+    var startInput = document.getElementById("casePeriodStart"), endInput = document.getElementById("casePeriodEnd");
+    if (startInput && endInput && (!startInput.value || !endInput.value)) {
+      var now = new Date();
+      startInput.value = formatDate(new Date(now.getTime() - 6*86400000));
+      endInput.value = formatDate(now);
+    }
+    return; // wait for Apply
+  }
+  fetchCasesForPeriod();
+}
+
+function applyCasePeriodCustom() {
+  var s = document.getElementById("casePeriodStart").value, e = document.getElementById("casePeriodEnd").value;
+  if (!s || !e) { toast("error","Please select both start and end dates"); return; }
+  if (s > e) { toast("error","Start date must be before end date"); return; }
+  state.casePeriodStart = s; state.casePeriodEnd = e;
+  fetchCasesForPeriod();
+}
+
+function fetchCasesForPeriod() {
+  var b = getCasePeriodBounds();
+  document.getElementById("casePeriodDesc").textContent = "Showing cases for " + casePeriodLabel();
+  apiGet("getCaseEntries",{start:b.start,end:b.end}).then(function(data){
+    state.allRangeCases=(data&&!data.error)?data:[]; applyCaseFilter();
+  }).catch(function(){ state.allRangeCases=[]; applyCaseFilter(); });
 }
 
 function applyCaseFilter() {
-  if (!state.user.isSupervisor&&state.user.displayName) state.cases=state.allMonthCases.filter(function(c){return c.analyst===state.user.displayName;});
-  else if (state.selectedAnalyst==="all") state.cases=state.allMonthCases;
-  else state.cases=state.allMonthCases.filter(function(c){return c.analyst===state.selectedAnalyst;});
+  if (!state.user.isSupervisor&&state.user.displayName) state.cases=state.allRangeCases.filter(function(c){return c.analyst===state.user.displayName;});
+  else if (state.selectedAnalyst==="all") state.cases=state.allRangeCases;
+  else state.cases=state.allRangeCases.filter(function(c){return c.analyst===state.selectedAnalyst;});
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
 }
 
@@ -561,12 +636,11 @@ function renderStats() {
 }
 
 function renderCaseStats() {
-  var ws=getWeekStart(new Date()), we=getWeekEnd(new Date());
-  var inWeek=state.cases.filter(function(c){return c.date>=formatDate(ws)&&c.date<=formatDate(we);});
-  var kc=inWeek.filter(function(c){return c.platform==='Kount';}), zc=inWeek.filter(function(c){return c.platform==='Zendesk';}), rc=inWeek.filter(function(c){return c.platform==='RADAR';});
+  var inRange=state.cases; // already scoped to the selected case period (Today/Week/Month/Custom)
+  var kc=inRange.filter(function(c){return c.platform==='Kount';}), zc=inRange.filter(function(c){return c.platform==='Zendesk';}), rc=inRange.filter(function(c){return c.platform==='RADAR';});
   var ka=ahtFromCases(kc), za=ahtFromCases(zc), ra=ahtFromCases(rc);
   var cards=[
-    {label:"Cases This Week",value:String(inWeek.length),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")},
+    {label:"Cases ("+casePeriodLabel()+")",value:String(inRange.length),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")},
     {label:"Kount AHT",value:fmtSeconds(ka.avgSec),sub:ka.count?"over "+ka.count+" case"+(ka.count===1?"":"s"):"no timed cases yet"},
     {label:"Zendesk AHT",value:fmtSeconds(za.avgSec),sub:za.count?"over "+za.count+" case"+(za.count===1?"":"s"):"no timed cases yet"},
     {label:"RADAR AHT",value:fmtSeconds(ra.avgSec),sub:ra.count?"over "+ra.count+" case"+(ra.count===1?"":"s"):"no timed cases yet"}
@@ -715,8 +789,44 @@ function renderTeamContent(data){
   document.getElementById("teamContent").innerHTML=Object.values(groups).map(function(g){return '<div class="team-section"><div class="team-section-header"><span>'+esc(g.label)+'</span><span class="badge">'+g.members.length+' Analysts</span></div><div class="team-grid">'+g.members.map(function(m){return '<div class="analyst-card" onclick="viewAnalystDetail(\''+esc(m.name)+'\')"><h3>'+esc(m.name)+'</h3><p class="role">'+esc(m.role)+'</p><div class="analyst-meta"><div class="analyst-meta-row"><span>🕐</span><span class="lbl">Total:</span> <strong>'+fmtDurationShort(m.totalSecs)+'</strong></div><div class="analyst-meta-row"><span>📊</span><span class="lbl">Utilization:</span> <strong class="'+(m.util>=75?"util-good":"util-warn")+'">'+m.util+'%</strong></div><div class="analyst-meta-row"><span>🛡️</span><span class="lbl">Cases:</span> <strong>'+m.caseCount+'</strong></div><div class="analyst-meta-row"><span>⏱️</span><span class="lbl">AHT:</span> <strong>'+fmtSeconds(m.ahtSec)+'</strong></div>'+(m.lastEntry?'<div class="analyst-meta-row"><span>📅</span><span class="lbl">Last Entry:</span> <strong>'+m.lastEntry+'</strong></div>':'')+' </div></div>';}).join("")+'</div></div>';}).join("");
 }
 
+// Maps a platform name to the Toggl task name it's logged under, so we can
+// compute "time spent in X" from time-tracker entries (mirrors PLATFORM_TASK_MAP
+// used server-side / by the extension for Toggl task naming).
+var PLATFORM_TASK_MAP = { Kount: "Rules Review", Zendesk: "Dispute Review", RADAR: "RADAR" };
+
+function platformBreakdownForAnalyst(name) {
+  var entries = state.teamData.entries.filter(function(e){ return e.analyst === name; });
+  var cases   = (state.teamData.cases || []).filter(function(c){ return c.analyst === name; });
+  return ["Kount","Zendesk","RADAR"].map(function(platform){
+    var taskName   = PLATFORM_TASK_MAP[platform];
+    var timeSecs   = sum(entries.filter(function(e){ return e.task === taskName; }), "duration");
+    var platCases  = cases.filter(function(c){ return c.platform === platform; });
+    var aht        = ahtFromCases(platCases);
+    return { platform: platform, timeSecs: timeSecs, caseCount: platCases.length, ahtSec: aht.avgSec };
+  });
+}
+
+var PLATFORM_COLORS = { Kount: "hsl(220,80%,55%)", Zendesk: "hsl(160,55%,40%)", RADAR: "hsl(45,90%,45%)" };
+
+function renderQuickViewPlatformBreakdown(name) {
+  var el = document.getElementById("quickViewPlatformBreakdown");
+  if (!el) return;
+  if (!name) { el.innerHTML = ""; return; }
+  var rows = platformBreakdownForAnalyst(name);
+  el.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem;padding:1rem 1.5rem 0">'
+    + rows.map(function(r){
+        return '<div style="background:var(--muted-bg);border:1px solid var(--border);border-left:4px solid '+PLATFORM_COLORS[r.platform]+';border-radius:.6rem;padding:.75rem">'
+          + '<div style="font-size:.78rem;color:var(--text-muted);font-weight:600">'+r.platform+'</div>'
+          + '<div style="font-size:1.05rem;font-weight:700">'+fmtDurationShort(r.timeSecs)+'</div>'
+          + '<div style="font-size:.75rem;color:var(--text-muted)">'+r.caseCount+' case'+(r.caseCount===1?'':'s')+' · AHT '+fmtSeconds(r.ahtSec)+'</div>'
+          + '</div>';
+      }).join("")
+    + '</div>';
+}
+
 function viewAnalystDetail(name){
   var entries=state.teamData.entries.filter(function(e){return e.analyst===name;}).sort(function(a,b){return b.date.localeCompare(a.date);});
+  renderQuickViewPlatformBreakdown(name);
   document.getElementById("quickViewBody").innerHTML=entries.length===0?'<tr><td colspan="6" class="empty">No entries found</td></tr>':entries.map(function(e){return '<tr><td>'+esc(e.date)+'</td><td><span class="badge">'+esc(e.analyst)+'</span></td><td>'+esc(e.task)+'</td><td>'+(e.start_time?fmtTimeDisplay(e.date,e.start_time):"–")+'</td><td>'+(e.end_time?fmtTimeDisplay(e.date,e.end_time):"–")+'</td><td style="text-align:right">'+fmtDuration(e.duration)+'</td></tr>';}).join("");
   document.getElementById("quickViewMeta").textContent=name+" · "+entries.length+" entries · "+fmtDurationShort(sum(entries,"duration"))+" total";
   document.getElementById("quickViewModal").classList.add("open");
@@ -729,6 +839,7 @@ function getFilteredExportEntries(){
 
 function quickViewData(){
   var entries=getFilteredExportEntries();
+  renderQuickViewPlatformBreakdown(null); // spans multiple analysts — no single breakdown to show
   document.getElementById("quickViewBody").innerHTML=entries.length===0?'<tr><td colspan="6" class="empty">No entries match filters</td></tr>':entries.map(function(e){return '<tr><td>'+esc(e.date)+'</td><td><span class="badge">'+esc(e.analyst)+'</span></td><td>'+esc(e.task)+'</td><td>'+(e.start_time?fmtTimeDisplay(e.date,e.start_time):"–")+'</td><td>'+(e.end_time?fmtTimeDisplay(e.date,e.end_time):"–")+'</td><td style="text-align:right">'+fmtDuration(e.duration)+'</td></tr>';}).join("");
   document.getElementById("quickViewMeta").textContent=entries.length+" entries · "+fmtDurationShort(sum(entries,"duration"))+" total";
   document.getElementById("quickViewModal").classList.add("open");
