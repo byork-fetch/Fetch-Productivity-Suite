@@ -342,8 +342,9 @@ textarea{resize:vertical;min-height:80px;}
   <div class="modal" style="max-width:900px;max-height:80vh">
     <div class="modal-header"><button class="modal-close" onclick="document.getElementById('quickViewModal').classList.remove('open')">×</button><h2>Filtered Entries</h2><p id="quickViewMeta"></p></div>
     <div class="modal-body" style="padding:0;overflow:auto">
+      <div id="quickViewModeToggle" style="display:flex;gap:.5rem;padding:1rem 1.5rem 0"></div>
       <div id="quickViewPlatformBreakdown"></div>
-      <div class="table-wrap" style="border:none;border-radius:0;overflow:visible"><table><thead><tr><th>Date</th><th>Analyst</th><th>Activity</th><th>Start</th><th>End</th><th style="text-align:right">Duration</th></tr></thead><tbody id="quickViewBody"></tbody></table></div>
+      <div class="table-wrap" style="border:none;border-radius:0;overflow:visible"><table id="quickViewTable"><thead></thead><tbody></tbody></table></div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="document.getElementById('quickViewModal').classList.remove('open')">Close</button></div>
   </div>
@@ -430,6 +431,7 @@ var state = {
   caseSortField:"date", caseSortDir:"desc", editEntry:null,
   casePlatformFilter:"all", casePeriodMode:"week", casePeriodStart:null, casePeriodEnd:null,
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null,
+  quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
   taskChart:null, caseChart:null, isDark:false, usersList:[]
 };
 
@@ -793,30 +795,37 @@ function renderTeamContent(data){
 // compute "time spent in X" from time-tracker entries (mirrors PLATFORM_TASK_MAP
 // used server-side / by the extension for Toggl task naming).
 var PLATFORM_TASK_MAP = { Kount: "Rules Review", Zendesk: "Dispute Review", RADAR: "RADAR" };
+var PLATFORM_COLORS   = { Kount: "hsl(220,80%,55%)", Zendesk: "hsl(160,55%,40%)", RADAR: "hsl(45,90%,45%)" };
 
-function platformBreakdownForAnalyst(name) {
-  var entries = state.teamData.entries.filter(function(e){ return e.analyst === name; });
-  var cases   = (state.teamData.cases || []).filter(function(c){ return c.analyst === name; });
+// Works on whatever entries/cases set is currently loaded into the Quick View
+// (single analyst, or a multi-analyst export-filtered set) — not tied to one name.
+function platformBreakdown(entries, cases) {
   return ["Kount","Zendesk","RADAR"].map(function(platform){
-    var taskName   = PLATFORM_TASK_MAP[platform];
-    var timeSecs   = sum(entries.filter(function(e){ return e.task === taskName; }), "duration");
-    var platCases  = cases.filter(function(c){ return c.platform === platform; });
-    var aht        = ahtFromCases(platCases);
+    var taskName  = PLATFORM_TASK_MAP[platform];
+    var timeSecs  = sum(entries.filter(function(e){ return e.task === taskName; }), "duration");
+    var platCases = cases.filter(function(c){ return c.platform === platform; });
+    var aht       = ahtFromCases(platCases);
     return { platform: platform, timeSecs: timeSecs, caseCount: platCases.length, ahtSec: aht.avgSec };
   });
 }
 
-var PLATFORM_COLORS = { Kount: "hsl(220,80%,55%)", Zendesk: "hsl(160,55%,40%)", RADAR: "hsl(45,90%,45%)" };
+// The Kount/Zendesk/RADAR tiles double as filters — clicking one narrows the
+// table below to just that platform (time entries by task name, cases by
+// platform); clicking the active one again clears back to "all".
+function toggleQuickViewPlatform(platform) {
+  state.quickViewPlatform = (state.quickViewPlatform === platform) ? "all" : platform;
+  renderQuickViewContent();
+}
 
-function renderQuickViewPlatformBreakdown(name) {
+function renderQuickViewPlatformBreakdown() {
   var el = document.getElementById("quickViewPlatformBreakdown");
   if (!el) return;
-  if (!name) { el.innerHTML = ""; return; }
-  var rows = platformBreakdownForAnalyst(name);
+  var rows = platformBreakdown(state.quickViewEntries, state.quickViewCases);
   el.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem;padding:1rem 1.5rem 0">'
     + rows.map(function(r){
-        return '<div style="background:var(--muted-bg);border:1px solid var(--border);border-left:4px solid '+PLATFORM_COLORS[r.platform]+';border-radius:.6rem;padding:.75rem">'
-          + '<div style="font-size:.78rem;color:var(--text-muted);font-weight:600">'+r.platform+'</div>'
+        var active = state.quickViewPlatform === r.platform;
+        return '<div onclick="toggleQuickViewPlatform(\''+r.platform+'\')" style="cursor:pointer;user-select:none;background:var(--muted-bg);border:1px solid '+(active?PLATFORM_COLORS[r.platform]:'var(--border)')+';border-left:4px solid '+PLATFORM_COLORS[r.platform]+';border-radius:.6rem;padding:.75rem;transition:border-color .15s'+(active?';box-shadow:0 0 0 1px '+PLATFORM_COLORS[r.platform]:'')+'">'
+          + '<div style="font-size:.78rem;color:var(--text-muted);font-weight:600">'+r.platform+(active?' ✓':'')+'</div>'
           + '<div style="font-size:1.05rem;font-weight:700">'+fmtDurationShort(r.timeSecs)+'</div>'
           + '<div style="font-size:.75rem;color:var(--text-muted)">'+r.caseCount+' case'+(r.caseCount===1?'':'s')+' · AHT '+fmtSeconds(r.ahtSec)+'</div>'
           + '</div>';
@@ -824,11 +833,63 @@ function renderQuickViewPlatformBreakdown(name) {
     + '</div>';
 }
 
+function setQuickViewMode(mode) {
+  state.quickViewMode = mode;
+  renderQuickViewContent();
+}
+
+function renderQuickViewModeToggle() {
+  var el = document.getElementById("quickViewModeToggle");
+  if (!el) return;
+  var modes = [["time","Time Entries"],["cases","Cases"]];
+  el.innerHTML = modes.map(function(m){
+    return '<button class="tab-btn'+(state.quickViewMode===m[0]?' active':'')+'" style="padding:.35rem .9rem;font-size:.8rem" onclick="setQuickViewMode(\''+m[0]+'\')">'+m[1]+'</button>';
+  }).join("");
+}
+
+function renderQuickViewTable() {
+  var head, body;
+  if (state.quickViewMode === "cases") {
+    var cases = state.quickViewCases.slice();
+    if (state.quickViewPlatform !== "all") cases = cases.filter(function(c){ return c.platform === state.quickViewPlatform; });
+    cases.sort(function(a,b){ return b.date.localeCompare(a.date); });
+    head = '<tr><th>Date</th><th>Analyst</th><th>Platform</th><th>Case ID</th><th>Source</th><th style="text-align:right">Handle Time</th></tr>';
+    body = cases.length===0 ? '<tr><td colspan="6" class="empty">No cases match filters</td></tr>' : cases.map(function(c){
+      var pc = c.platform==='Kount'?'badge-kount':c.platform==='Zendesk'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':'';
+      return '<tr><td>'+esc(c.date)+'</td><td><span class="badge">'+esc(c.analyst)+'</span></td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+esc(c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+fmtSeconds(c.handle_seconds)+'</td></tr>';
+    }).join("");
+    document.getElementById("quickViewMeta").textContent=(state.quickViewAnalyst?state.quickViewAnalyst+" · ":"")+cases.length+" case"+(cases.length===1?"":"s");
+  } else {
+    var entries = state.quickViewEntries.slice();
+    if (state.quickViewPlatform !== "all") {
+      var taskName = PLATFORM_TASK_MAP[state.quickViewPlatform];
+      entries = entries.filter(function(e){ return e.task === taskName; });
+    }
+    entries.sort(function(a,b){ return b.date.localeCompare(a.date); });
+    head = '<tr><th>Date</th><th>Analyst</th><th>Activity</th><th>Start</th><th>End</th><th style="text-align:right">Duration</th></tr>';
+    body = entries.length===0 ? '<tr><td colspan="6" class="empty">No entries match filters</td></tr>' : entries.map(function(e){
+      return '<tr><td>'+esc(e.date)+'</td><td><span class="badge">'+esc(e.analyst)+'</span></td><td>'+esc(e.task)+'</td><td>'+(e.start_time?fmtTimeDisplay(e.date,e.start_time):"–")+'</td><td>'+(e.end_time?fmtTimeDisplay(e.date,e.end_time):"–")+'</td><td style="text-align:right">'+fmtDuration(e.duration)+'</td></tr>';
+    }).join("");
+    document.getElementById("quickViewMeta").textContent=(state.quickViewAnalyst?state.quickViewAnalyst+" · ":"")+entries.length+" entries · "+fmtDurationShort(sum(entries,"duration"))+" total";
+  }
+  var table = document.getElementById("quickViewTable");
+  table.querySelector("thead").innerHTML = head;
+  table.querySelector("tbody").innerHTML = body;
+}
+
+function renderQuickViewContent() {
+  renderQuickViewModeToggle();
+  renderQuickViewPlatformBreakdown();
+  renderQuickViewTable();
+}
+
 function viewAnalystDetail(name){
-  var entries=state.teamData.entries.filter(function(e){return e.analyst===name;}).sort(function(a,b){return b.date.localeCompare(a.date);});
-  renderQuickViewPlatformBreakdown(name);
-  document.getElementById("quickViewBody").innerHTML=entries.length===0?'<tr><td colspan="6" class="empty">No entries found</td></tr>':entries.map(function(e){return '<tr><td>'+esc(e.date)+'</td><td><span class="badge">'+esc(e.analyst)+'</span></td><td>'+esc(e.task)+'</td><td>'+(e.start_time?fmtTimeDisplay(e.date,e.start_time):"–")+'</td><td>'+(e.end_time?fmtTimeDisplay(e.date,e.end_time):"–")+'</td><td style="text-align:right">'+fmtDuration(e.duration)+'</td></tr>';}).join("");
-  document.getElementById("quickViewMeta").textContent=name+" · "+entries.length+" entries · "+fmtDurationShort(sum(entries,"duration"))+" total";
+  state.quickViewAnalyst  = name;
+  state.quickViewMode     = "time";
+  state.quickViewPlatform = "all";
+  state.quickViewEntries  = state.teamData.entries.filter(function(e){ return e.analyst===name; });
+  state.quickViewCases    = (state.teamData.cases||[]).filter(function(c){ return c.analyst===name; });
+  renderQuickViewContent();
   document.getElementById("quickViewModal").classList.add("open");
 }
 
@@ -837,11 +898,35 @@ function getFilteredExportEntries(){
   return state.teamData.entries.filter(function(e){if(analyst!=="all"&&e.analyst!==analyst)return false;if(activity!=="all"&&e.task!==activity)return false;if(date&&e.date!==date)return false;if(state.selectedSupervisor){var members=(state.teamData.assignments||[]).filter(function(a){return a.supervisor_email===state.selectedSupervisor;}).map(function(a){return a.analyst_name;});if(!members.includes(e.analyst))return false;}return true;});
 }
 
+// Mirrors getFilteredExportEntries but for cases. Cases don't have a "task"
+// field, so the Activity dropdown only applies if the selected activity
+// happens to be one of the platform task names (Rules Review/Dispute
+// Review/RADAR) — otherwise no cases match that activity, same as entries.
+function getFilteredExportCases(){
+  var analyst=document.getElementById("exportAnalyst").value,activity=document.getElementById("exportActivity").value,date=document.getElementById("exportDate").value;
+  var cases = state.teamData.cases || [];
+  return cases.filter(function(c){
+    if(analyst!=="all"&&c.analyst!==analyst) return false;
+    if(date&&c.date!==date) return false;
+    if(activity!=="all"){
+      var matchedPlatform = Object.keys(PLATFORM_TASK_MAP).find(function(p){ return PLATFORM_TASK_MAP[p]===activity; });
+      if (!matchedPlatform || c.platform !== matchedPlatform) return false;
+    }
+    if(state.selectedSupervisor){
+      var members=(state.teamData.assignments||[]).filter(function(a){return a.supervisor_email===state.selectedSupervisor;}).map(function(a){return a.analyst_name;});
+      if(!members.includes(c.analyst)) return false;
+    }
+    return true;
+  });
+}
+
 function quickViewData(){
-  var entries=getFilteredExportEntries();
-  renderQuickViewPlatformBreakdown(null); // spans multiple analysts — no single breakdown to show
-  document.getElementById("quickViewBody").innerHTML=entries.length===0?'<tr><td colspan="6" class="empty">No entries match filters</td></tr>':entries.map(function(e){return '<tr><td>'+esc(e.date)+'</td><td><span class="badge">'+esc(e.analyst)+'</span></td><td>'+esc(e.task)+'</td><td>'+(e.start_time?fmtTimeDisplay(e.date,e.start_time):"–")+'</td><td>'+(e.end_time?fmtTimeDisplay(e.date,e.end_time):"–")+'</td><td style="text-align:right">'+fmtDuration(e.duration)+'</td></tr>';}).join("");
-  document.getElementById("quickViewMeta").textContent=entries.length+" entries · "+fmtDurationShort(sum(entries,"duration"))+" total";
+  state.quickViewAnalyst  = null;
+  state.quickViewMode     = "time";
+  state.quickViewPlatform = "all";
+  state.quickViewEntries  = getFilteredExportEntries();
+  state.quickViewCases    = getFilteredExportCases();
+  renderQuickViewContent();
   document.getElementById("quickViewModal").classList.add("open");
 }
 
