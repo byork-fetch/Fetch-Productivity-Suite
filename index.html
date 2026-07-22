@@ -198,6 +198,10 @@ textarea{resize:vertical;min-height:80px;}
           <div class="card" style="margin-bottom:1.25rem">
             <div class="card-body">
               <div class="period-row"><h3>Reporting Period</h3><select id="monthSelect"><option value="">Loading…</option></select></div>
+              <div class="export-filters-grid" style="margin-top:1rem">
+                <div class="form-group"><label>Analyst</label><select id="overviewAnalystFilter" class="form-select"><option value="all">All Analysts</option></select></div>
+                <div class="form-group"><label>Activity</label><select id="overviewActivityFilter" class="form-select"><option value="all">All Activities</option></select></div>
+              </div>
             </div>
           </div>
           <div class="card" style="margin-bottom:1.25rem">
@@ -444,6 +448,7 @@ var state = {
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null,
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
+  overviewAnalystFilter:"all", overviewActivityFilter:"all",
   taskChart:null, caseChart:null, isDark:false, usersList:[]
 };
 
@@ -462,13 +467,15 @@ function loadFilterPrefs(){
     var raw = localStorage.getItem(FILTER_PREFS_KEY);
     if (!raw) return;
     var p = JSON.parse(raw);
-    if (p.casePeriodMode && ["today","week","month","custom"].indexOf(p.casePeriodMode)!==-1) state.casePeriodMode = p.casePeriodMode;
+    if (p.casePeriodMode && ["today","week","month","30d","60d","90d","custom"].indexOf(p.casePeriodMode)!==-1) state.casePeriodMode = p.casePeriodMode;
     if (p.casePeriodStart) state.casePeriodStart = p.casePeriodStart;
     if (p.casePeriodEnd) state.casePeriodEnd = p.casePeriodEnd;
     if (p.casePlatformFilter) state.casePlatformFilter = p.casePlatformFilter;
     if (p.caseSearchQuery) state.caseSearchQuery = p.caseSearchQuery;
     if (p.timeLogAnalystFilter) state.timeLogAnalystFilter = p.timeLogAnalystFilter;
     if (p.timeLogActivityFilter) state.timeLogActivityFilter = p.timeLogActivityFilter;
+    if (p.overviewAnalystFilter) state.overviewAnalystFilter = p.overviewAnalystFilter;
+    if (p.overviewActivityFilter) state.overviewActivityFilter = p.overviewActivityFilter;
     if (p.selectedAnalyst) state._savedSelectedAnalyst = p.selectedAnalyst; // applied conditionally in bootWithUser
   } catch(e) { /* ignore corrupt/unavailable storage */ }
 }
@@ -483,6 +490,8 @@ function persistFilterPrefs(){
       caseSearchQuery: state.caseSearchQuery,
       timeLogAnalystFilter: state.timeLogAnalystFilter,
       timeLogActivityFilter: state.timeLogActivityFilter,
+      overviewAnalystFilter: state.overviewAnalystFilter,
+      overviewActivityFilter: state.overviewActivityFilter,
       selectedAnalyst: state.selectedAnalyst
     }));
   } catch(e) { /* ignore — not critical if this fails */ }
@@ -531,6 +540,8 @@ function bootWithUser(user) {
   document.getElementById("monthSelect").addEventListener("change", function(){ state.selectedMonth=this.value; fetchEntries(); });
   document.getElementById("timeLogAnalystFilter").addEventListener("change", function(){ state.timeLogAnalystFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
   document.getElementById("timeLogActivityFilter").addEventListener("change", function(){ state.timeLogActivityFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
+  document.getElementById("overviewAnalystFilter").addEventListener("change", function(){ state.overviewAnalystFilter=this.value; persistFilterPrefs(); renderAnalystTable(); renderChart(); });
+  document.getElementById("overviewActivityFilter").addEventListener("change", function(){ state.overviewActivityFilter=this.value; persistFilterPrefs(); renderAnalystTable(); renderChart(); });
   document.getElementById("caseSearchInput").value = state.caseSearchQuery || "";
   document.getElementById("caseSearchInput").addEventListener("input", function(){ state.caseSearchQuery=this.value; persistFilterPrefs(); renderCaseLog(); });
   document.getElementById("signOutBtn").addEventListener("click", function(){
@@ -614,6 +625,9 @@ function getCasePeriodBounds() {
     var first=new Date(now.getFullYear(),now.getMonth(),1), last=new Date(now.getFullYear(),now.getMonth()+1,0);
     return { start:formatDate(first), end:formatDate(last) };
   }
+  if (state.casePeriodMode === "30d") { return { start:formatDate(new Date(now.getTime()-29*86400000)), end:formatDate(now) }; }
+  if (state.casePeriodMode === "60d") { return { start:formatDate(new Date(now.getTime()-59*86400000)), end:formatDate(now) }; }
+  if (state.casePeriodMode === "90d") { return { start:formatDate(new Date(now.getTime()-89*86400000)), end:formatDate(now) }; }
   // custom
   var s = state.casePeriodStart || formatDate(now), e = state.casePeriodEnd || formatDate(now);
   return { start:s, end:e };
@@ -623,6 +637,9 @@ function casePeriodLabel() {
   if (state.casePeriodMode === "today") return "Today";
   if (state.casePeriodMode === "week")  return "This Week";
   if (state.casePeriodMode === "month") return "This Month";
+  if (state.casePeriodMode === "30d") return "Last 30 Days";
+  if (state.casePeriodMode === "60d") return "Last 60 Days";
+  if (state.casePeriodMode === "90d") return "Last 90 Days";
   var b = getCasePeriodBounds();
   return b.start + " – " + b.end;
 }
@@ -638,7 +655,7 @@ function getPriorCasePeriodBounds(bounds) {
 }
 
 function renderCasePeriodControls() {
-  var opts = [["today","Today"],["week","This Week"],["month","This Month"],["custom","Custom"]];
+  var opts = [["today","Today"],["week","This Week"],["month","This Month"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
   var el = document.getElementById("casePeriodControls");
   if (!el) return;
   el.innerHTML = opts.map(function(o){
@@ -709,6 +726,7 @@ function applyAnalystFilter() {
   else if (state.selectedAnalyst==="all") state.entries=state.allMonthEntries;
   else state.entries=state.allMonthEntries.filter(function(e){return e.analyst===state.selectedAnalyst;});
   updateTimeLogFilterOptions();
+  updateOverviewFilterOptions();
   renderStats(); renderAnalystTable(); renderTimeLog(); renderEditedSection(); renderChart(); renderCaseStats(); renderIdleGaps();
 }
 
@@ -853,10 +871,11 @@ function sortCaseTable(field){state.caseSortDir=state.caseSortField===field?(sta
 function ahtFromCases(cases){var d=cases.filter(function(c){return typeof c.handle_seconds==="number"&&c.handle_seconds>0;}).map(function(c){return c.handle_seconds;});if(!d.length)return{avgSec:null,count:0};return{avgSec:Math.round(d.reduce(function(a,b){return a+b;},0)/d.length),count:d.length};}
 function fmtSeconds(sec){if(sec==null||!isFinite(sec)||sec<=0)return"—";var m=Math.floor(sec/60),s=Math.round(sec%60);return m<=0?s+"s":m+"m "+String(s).padStart(2,"0")+"s";}
 
-function renderAnalystTable(){var t={};state.entries.forEach(function(e){t[e.analyst]=(t[e.analyst]||0)+e.duration;});var s=Object.entries(t).sort(function(a,b){return b[1]-a[1];});document.getElementById("analystTable").innerHTML=s.length===0?'<div class="empty">No entries for this period</div>':s.map(function(x){return '<div class="analyst-row"><span class="analyst-name">'+esc(x[0])+'</span><span class="analyst-hours">'+fmtDurationShort(x[1])+'</span></div>';}).join("");}
+function renderAnalystTable(){var entries=getOverviewEntries();var t={};entries.forEach(function(e){t[e.analyst]=(t[e.analyst]||0)+e.duration;});var s=Object.entries(t).sort(function(a,b){return b[1]-a[1];});document.getElementById("analystTable").innerHTML=s.length===0?'<div class="empty">No entries match filters</div>':s.map(function(x){return '<div class="analyst-row"><span class="analyst-name">'+esc(x[0])+'</span><span class="analyst-hours">'+fmtDurationShort(x[1])+'</span></div>';}).join("");}
 
 function renderChart(){
-  var t={};state.entries.forEach(function(e){t[e.task]=(t[e.task]||0)+e.duration;});
+  var entries=getOverviewEntries();
+  var t={};entries.forEach(function(e){t[e.task]=(t[e.task]||0)+e.duration;});
   var s=Object.entries(t).sort(function(a,b){return b[1]-a[1];});
   var labels=s.map(function(x){return x[0];}), values=s.map(function(x){return +(x[1]/3600).toFixed(3);});
   var colors=["hsl(355,75%,60%)","hsl(340,70%,58%)","hsl(325,68%,56%)","hsl(310,65%,54%)","hsl(295,62%,52%)"];
@@ -878,6 +897,32 @@ function updateTimeLogFilterOptions(){
   analystSel.innerHTML='<option value="all">All Analysts</option>'+analysts.map(function(a){return '<option value="'+esc(a)+'">'+esc(a)+'</option>';}).join("");
   activitySel.innerHTML='<option value="all">All Activities</option>'+activities.map(function(t){return '<option value="'+esc(t)+'">'+esc(t)+'</option>';}).join("");
   analystSel.value=keepAnalyst; activitySel.value=keepActivity;
+}
+
+// Same pattern as updateTimeLogFilterOptions, for the Time by Task / Analyst
+// Logged Time overview — its own local Analyst/Activity filter, independent
+// of the header Analyst filter and of the Detailed Time Log's sub-filters.
+function updateOverviewFilterOptions(){
+  var analystSel=document.getElementById("overviewAnalystFilter"), activitySel=document.getElementById("overviewActivityFilter");
+  if(!analystSel||!activitySel) return;
+  var analysts=[...new Set(state.entries.map(function(e){return e.analyst;}))].sort();
+  var activities=[...new Set(state.entries.map(function(e){return e.task;}))].sort();
+  var keepAnalyst=analysts.indexOf(state.overviewAnalystFilter)!==-1?state.overviewAnalystFilter:"all";
+  var keepActivity=activities.indexOf(state.overviewActivityFilter)!==-1?state.overviewActivityFilter:"all";
+  state.overviewAnalystFilter=keepAnalyst; state.overviewActivityFilter=keepActivity;
+  analystSel.innerHTML='<option value="all">All Analysts</option>'+analysts.map(function(a){return '<option value="'+esc(a)+'">'+esc(a)+'</option>';}).join("");
+  activitySel.innerHTML='<option value="all">All Activities</option>'+activities.map(function(t){return '<option value="'+esc(t)+'">'+esc(t)+'</option>';}).join("");
+  analystSel.value=keepAnalyst; activitySel.value=keepActivity;
+}
+
+// The entries Time by Task / Analyst Logged Time actually render from, after
+// applying the overview's own local filters on top of state.entries.
+function getOverviewEntries(){
+  return state.entries.filter(function(e){
+    if(state.overviewAnalystFilter!=="all"&&e.analyst!==state.overviewAnalystFilter) return false;
+    if(state.overviewActivityFilter!=="all"&&e.task!==state.overviewActivityFilter) return false;
+    return true;
+  });
 }
 
 function renderTimeLog(){
