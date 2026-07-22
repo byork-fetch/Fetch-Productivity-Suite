@@ -198,10 +198,7 @@ textarea{resize:vertical;min-height:80px;}
           <div class="card" style="margin-bottom:1.25rem">
             <div class="card-body">
               <div class="period-row"><h3>Reporting Period</h3><select id="monthSelect"><option value="">Loading…</option></select></div>
-              <div class="export-filters-grid" style="margin-top:1rem">
-                <div class="form-group"><label>Analyst</label><select id="overviewAnalystFilter" class="form-select"><option value="all">All Analysts</option></select></div>
-                <div class="form-group"><label>Activity</label><select id="overviewActivityFilter" class="form-select"><option value="all">All Activities</option></select></div>
-              </div>
+              <div class="form-group" style="margin-top:1rem;max-width:280px"><label>Activity</label><select id="overviewActivityFilter" class="form-select"><option value="all">All Activities</option></select></div>
             </div>
           </div>
           <div class="card" style="margin-bottom:1.25rem">
@@ -448,7 +445,7 @@ var state = {
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null,
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
-  overviewAnalystFilter:"all", overviewActivityFilter:"all",
+  overviewActivityFilter:"all", privilegedNames:{},
   taskChart:null, caseChart:null, isDark:false, usersList:[]
 };
 
@@ -467,14 +464,13 @@ function loadFilterPrefs(){
     var raw = localStorage.getItem(FILTER_PREFS_KEY);
     if (!raw) return;
     var p = JSON.parse(raw);
-    if (p.casePeriodMode && ["today","week","month","30d","60d","90d","custom"].indexOf(p.casePeriodMode)!==-1) state.casePeriodMode = p.casePeriodMode;
+    if (p.casePeriodMode && ["today","week","30d","60d","90d","custom"].indexOf(p.casePeriodMode)!==-1) state.casePeriodMode = p.casePeriodMode;
     if (p.casePeriodStart) state.casePeriodStart = p.casePeriodStart;
     if (p.casePeriodEnd) state.casePeriodEnd = p.casePeriodEnd;
     if (p.casePlatformFilter) state.casePlatformFilter = p.casePlatformFilter;
     if (p.caseSearchQuery) state.caseSearchQuery = p.caseSearchQuery;
     if (p.timeLogAnalystFilter) state.timeLogAnalystFilter = p.timeLogAnalystFilter;
     if (p.timeLogActivityFilter) state.timeLogActivityFilter = p.timeLogActivityFilter;
-    if (p.overviewAnalystFilter) state.overviewAnalystFilter = p.overviewAnalystFilter;
     if (p.overviewActivityFilter) state.overviewActivityFilter = p.overviewActivityFilter;
     if (p.selectedAnalyst) state._savedSelectedAnalyst = p.selectedAnalyst; // applied conditionally in bootWithUser
   } catch(e) { /* ignore corrupt/unavailable storage */ }
@@ -490,11 +486,34 @@ function persistFilterPrefs(){
       caseSearchQuery: state.caseSearchQuery,
       timeLogAnalystFilter: state.timeLogAnalystFilter,
       timeLogActivityFilter: state.timeLogActivityFilter,
-      overviewAnalystFilter: state.overviewAnalystFilter,
       overviewActivityFilter: state.overviewActivityFilter,
       selectedAnalyst: state.selectedAnalyst
     }));
   } catch(e) { /* ignore — not critical if this fails */ }
+}
+
+// ============================================================
+// PRIVILEGED-NAME EXCLUSION — supervisors and admins tend to log a lot of
+// meetings/events rather than case-queue work, since they aren't in the
+// queues as often as analysts. Their numbers stay fully viewable if someone
+// picks them by name in a dropdown, but they're excluded from any team-wide
+// aggregate: "All Analysts" on the dashboard, "All Teams"/per-team views in
+// Team Directory, and the Needs Attention banner's team-average baseline.
+// ============================================================
+function computePrivilegedNames(usersList){
+  var set = {};
+  (usersList||[]).forEach(function(u){
+    var r = (u.role||"").toLowerCase().trim();
+    if (r==="admin" || r==="supervisor") set[u.display_name] = true;
+  });
+  return set;
+}
+
+function loadPrivilegedNames(){
+  if (!state.user.isSupervisor) { state.privilegedNames = {}; return Promise.resolve(); }
+  return apiGet("getAllUsers",{email:state.user.email}).then(function(users){
+    state.privilegedNames = computePrivilegedNames(Array.isArray(users) ? users : []);
+  }).catch(function(){ state.privilegedNames = {}; });
 }
 
 // ============================================================
@@ -540,7 +559,6 @@ function bootWithUser(user) {
   document.getElementById("monthSelect").addEventListener("change", function(){ state.selectedMonth=this.value; fetchEntries(); });
   document.getElementById("timeLogAnalystFilter").addEventListener("change", function(){ state.timeLogAnalystFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
   document.getElementById("timeLogActivityFilter").addEventListener("change", function(){ state.timeLogActivityFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
-  document.getElementById("overviewAnalystFilter").addEventListener("change", function(){ state.overviewAnalystFilter=this.value; persistFilterPrefs(); renderAnalystTable(); renderChart(); });
   document.getElementById("overviewActivityFilter").addEventListener("change", function(){ state.overviewActivityFilter=this.value; persistFilterPrefs(); renderAnalystTable(); renderChart(); });
   document.getElementById("caseSearchInput").value = state.caseSearchQuery || "";
   document.getElementById("caseSearchInput").addEventListener("input", function(){ state.caseSearchQuery=this.value; persistFilterPrefs(); renderCaseLog(); });
@@ -549,11 +567,13 @@ function bootWithUser(user) {
     if (typeof google!=="undefined"&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect();
     window.location.reload();
   });
-  loadMonths();
-  renderCasePeriodControls();
-  renderCasePlatformFilterRow();
-  fetchCasesForPeriod();
-  setupCSVDrop();
+  loadPrivilegedNames().then(function(){
+    loadMonths();
+    renderCasePeriodControls();
+    renderCasePlatformFilterRow();
+    fetchCasesForPeriod();
+    setupCSVDrop();
+  });
 }
 
 function setGreeting() {
@@ -621,10 +641,6 @@ function getCasePeriodBounds() {
   var now = new Date();
   if (state.casePeriodMode === "today") { var d=formatDate(now); return { start:d, end:d }; }
   if (state.casePeriodMode === "week")  { return { start:formatDate(getWeekStart(now)), end:formatDate(getWeekEnd(now)) }; }
-  if (state.casePeriodMode === "month") {
-    var first=new Date(now.getFullYear(),now.getMonth(),1), last=new Date(now.getFullYear(),now.getMonth()+1,0);
-    return { start:formatDate(first), end:formatDate(last) };
-  }
   if (state.casePeriodMode === "30d") { return { start:formatDate(new Date(now.getTime()-29*86400000)), end:formatDate(now) }; }
   if (state.casePeriodMode === "60d") { return { start:formatDate(new Date(now.getTime()-59*86400000)), end:formatDate(now) }; }
   if (state.casePeriodMode === "90d") { return { start:formatDate(new Date(now.getTime()-89*86400000)), end:formatDate(now) }; }
@@ -636,7 +652,6 @@ function getCasePeriodBounds() {
 function casePeriodLabel() {
   if (state.casePeriodMode === "today") return "Today";
   if (state.casePeriodMode === "week")  return "This Week";
-  if (state.casePeriodMode === "month") return "This Month";
   if (state.casePeriodMode === "30d") return "Last 30 Days";
   if (state.casePeriodMode === "60d") return "Last 60 Days";
   if (state.casePeriodMode === "90d") return "Last 90 Days";
@@ -655,7 +670,7 @@ function getPriorCasePeriodBounds(bounds) {
 }
 
 function renderCasePeriodControls() {
-  var opts = [["today","Today"],["week","This Week"],["month","This Month"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
+  var opts = [["today","Today"],["week","This Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
   var el = document.getElementById("casePeriodControls");
   if (!el) return;
   el.innerHTML = opts.map(function(o){
@@ -711,7 +726,7 @@ function fetchCasesForPeriod() {
 
 function filterCasesForCurrentScope(cases) {
   if (!state.user.isSupervisor&&state.user.displayName) return cases.filter(function(c){return c.analyst===state.user.displayName;});
-  if (state.selectedAnalyst==="all") return cases;
+  if (state.selectedAnalyst==="all") return cases.filter(function(c){return !state.privilegedNames[c.analyst];});
   return cases.filter(function(c){return c.analyst===state.selectedAnalyst;});
 }
 
@@ -723,7 +738,7 @@ function applyCaseFilter() {
 
 function applyAnalystFilter() {
   if (!state.user.isSupervisor&&state.user.displayName) state.entries=state.allMonthEntries.filter(function(e){return e.analyst===state.user.displayName;});
-  else if (state.selectedAnalyst==="all") state.entries=state.allMonthEntries;
+  else if (state.selectedAnalyst==="all") state.entries=state.allMonthEntries.filter(function(e){return !state.privilegedNames[e.analyst];});
   else state.entries=state.allMonthEntries.filter(function(e){return e.analyst===state.selectedAnalyst;});
   updateTimeLogFilterOptions();
   updateOverviewFilterOptions();
@@ -899,27 +914,23 @@ function updateTimeLogFilterOptions(){
   analystSel.value=keepAnalyst; activitySel.value=keepActivity;
 }
 
-// Same pattern as updateTimeLogFilterOptions, for the Time by Task / Analyst
-// Logged Time overview — its own local Analyst/Activity filter, independent
-// of the header Analyst filter and of the Detailed Time Log's sub-filters.
+// Time by Task / Analyst Logged Time get their own Activity filter — narrowing
+// by analyst is already the header Analyst filter's job page-wide, so we don't
+// duplicate that control here.
 function updateOverviewFilterOptions(){
-  var analystSel=document.getElementById("overviewAnalystFilter"), activitySel=document.getElementById("overviewActivityFilter");
-  if(!analystSel||!activitySel) return;
-  var analysts=[...new Set(state.entries.map(function(e){return e.analyst;}))].sort();
+  var activitySel=document.getElementById("overviewActivityFilter");
+  if(!activitySel) return;
   var activities=[...new Set(state.entries.map(function(e){return e.task;}))].sort();
-  var keepAnalyst=analysts.indexOf(state.overviewAnalystFilter)!==-1?state.overviewAnalystFilter:"all";
   var keepActivity=activities.indexOf(state.overviewActivityFilter)!==-1?state.overviewActivityFilter:"all";
-  state.overviewAnalystFilter=keepAnalyst; state.overviewActivityFilter=keepActivity;
-  analystSel.innerHTML='<option value="all">All Analysts</option>'+analysts.map(function(a){return '<option value="'+esc(a)+'">'+esc(a)+'</option>';}).join("");
+  state.overviewActivityFilter=keepActivity;
   activitySel.innerHTML='<option value="all">All Activities</option>'+activities.map(function(t){return '<option value="'+esc(t)+'">'+esc(t)+'</option>';}).join("");
-  analystSel.value=keepAnalyst; activitySel.value=keepActivity;
+  activitySel.value=keepActivity;
 }
 
 // The entries Time by Task / Analyst Logged Time actually render from, after
-// applying the overview's own local filters on top of state.entries.
+// applying the Activity filter on top of state.entries.
 function getOverviewEntries(){
   return state.entries.filter(function(e){
-    if(state.overviewAnalystFilter!=="all"&&e.analyst!==state.overviewAnalystFilter) return false;
     if(state.overviewActivityFilter!=="all"&&e.task!==state.overviewActivityFilter) return false;
     return true;
   });
@@ -1124,7 +1135,11 @@ function renderAttentionBanner(assignments, entries, cases) {
 }
 
 function renderTeamContent(data){
-  var assignments=(data.assignments||[]).filter(function(a){if(!state.user.isSupervisor)return a.analyst_name===state.user.displayName;return!state.selectedSupervisor||a.supervisor_email===state.selectedSupervisor;});
+  var assignments=(data.assignments||[]).filter(function(a){
+    if (state.privilegedNames[a.analyst_name]) return false; // supervisors/admins shouldn't skew team-wide views
+    if(!state.user.isSupervisor)return a.analyst_name===state.user.displayName;
+    return!state.selectedSupervisor||a.supervisor_email===state.selectedSupervisor;
+  });
   renderAttentionBanner(assignments, data.entries, data.cases);
   if(!assignments.length){document.getElementById("teamContent").innerHTML='<div class="card"><div class="empty" style="padding:3rem">No team assignments found</div></div>';return;}
   var allCases=data.cases||[],groups={};
