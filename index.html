@@ -383,9 +383,18 @@ function apiGet(action, params) {
 
 function apiPost(payload) {
   payload.dashSecret = DASH_SECRET;
+  // NOTE: Content-Type is intentionally "text/plain" here, NOT "application/json".
+  // A POST with an application/json Content-Type is a non-simple cross-origin
+  // request, which forces the browser to send a CORS preflight (OPTIONS) first.
+  // Apps Script web app deployments don't implement doOptions() / preflight
+  // responses, so that preflight fails and the browser throws
+  // "TypeError: Failed to fetch" before doPost() ever runs server-side.
+  // text/plain keeps this a "simple request" (no preflight), and Code.gs
+  // already does JSON.parse(e.postData.contents) itself, so it doesn't care
+  // what Content-Type header we actually send.
   return fetch(EXEC_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload)
   }).then(function(r){ return r.json(); });
 }
