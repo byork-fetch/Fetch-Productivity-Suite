@@ -187,11 +187,13 @@ function getTimeEntries(startDate, endDate) {
       var headers = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id"];
       var start = new Date(startDate + "T00:00:00"), end = new Date(endDate + "T23:59:59");
       var results = [];
+      var skipped = 0;
       for (var i = 0; i < data.length; i++) {
         var row = data[i];
         if (!row[0] && !row[1]) continue;
         var dateVal   = row[5];
         var entryDate = (dateVal instanceof Date) ? dateVal : new Date(dateVal + "T00:00:00");
+        if (isNaN(entryDate.getTime())) { skipped++; continue; } // malformed date — skip, but track it
         if (entryDate >= start && entryDate <= end) {
           var entry = {};
           for (var j = 0; j < headers.length; j++) {
@@ -201,6 +203,7 @@ function getTimeEntries(startDate, endDate) {
           results.push(entry);
         }
       }
+      if (skipped > 0) Logger.log("getTimeEntries: skipped " + skipped + " row(s) with unparseable dates for range " + startDate + " to " + endDate);
       return results;
     });
   } catch(e) { return { error: e.toString() }; }
@@ -242,16 +245,45 @@ function updateTimeEntryData(id, updates, callerEmail) {
       if (data[i][0].toString() === id.toString()) { rowIndex = i + 2; entryAnalyst = data[i][1].toString(); break; }
     }
     if (rowIndex === -1) return { error: "Entry not found" };
-    if (!isPrivileged(role) && entryAnalyst !== displayName) return { error: "Permission denied" };
+    if (!isPrivileged(role) && entryAnalyst !== displayName) {
+      // Log this rather than failing silently — a mismatch here is usually
+      // "entryAnalyst" (as logged by the extension) not matching
+      // "users.display_name" exactly, which is otherwise invisible from the
+      // dashboard's point of view (it just shows "Permission denied").
+      Logger.log("updateTimeEntryData permission denied — entry analyst='" + entryAnalyst + "', caller displayName='" + displayName + "', caller email=" + callerEmail);
+      return { error: "Permission denied" };
+    }
     var existingOriginal = data[rowIndex - 2][11];
     var originalDuration = data[rowIndex - 2][4];
-    sheet.getRange(rowIndex, 4).setValue(updates.task || data[rowIndex - 2][3]);
-    sheet.getRange(rowIndex, 5).setValue(Number(updates.duration) || data[rowIndex - 2][4]);
+
+    // IMPORTANT: use explicit "was this actually provided" checks instead of
+    // `updates.x || fallback`. `||` treats a legitimate value of 0 (e.g. an
+    // edit that intentionally zeroes out a duration) or an emptied-out task
+    // name as "not provided," and silently falls back to the OLD value while
+    // still returning { success: true } — the dashboard shows "Entry
+    // updated!" even though nothing changed. That's the bug that was hiding
+    // behind reports of edits "not saving."
+    var newTask = (updates.task !== undefined && updates.task !== null && updates.task !== "")
+      ? updates.task : data[rowIndex - 2][3];
+    var newDuration = (updates.duration !== undefined && updates.duration !== null && !isNaN(Number(updates.duration)))
+      ? Number(updates.duration) : data[rowIndex - 2][4];
+
+    sheet.getRange(rowIndex, 4).setValue(newTask);
+    sheet.getRange(rowIndex, 5).setValue(newDuration);
     sheet.getRange(rowIndex, 8).setValue(updates.start_time || "");
     sheet.getRange(rowIndex, 9).setValue(updates.end_time   || "");
     sheet.getRange(rowIndex, 10).setValue(updates.edit_reason || "");
     sheet.getRange(rowIndex, 11).setValue(new Date().toISOString());
-    if (!existingOriginal) sheet.getRange(rowIndex, 12).setValue(originalDuration);
+
+    // Only stamp original_duration the first time this row is edited. Guard
+    // against the same falsy-0 trap: if the row's true original duration was
+    // ever legitimately 0, "existingOriginal" reads back as 0 (falsy) forever,
+    // and every future edit would re-stamp original_duration with whatever
+    // the CURRENT (already-edited) duration is — permanently losing the real
+    // original and corrupting the "% Changed" column in Recently Edited.
+    if (existingOriginal === "" || existingOriginal === null || existingOriginal === undefined) {
+      sheet.getRange(rowIndex, 12).setValue(originalDuration);
+    }
     bumpCacheVersion();
     return { success: true };
   } catch(e) { return { error: e.toString() }; }
