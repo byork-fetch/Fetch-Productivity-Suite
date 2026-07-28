@@ -1144,15 +1144,28 @@ function renderAttentionBanner(assignments, entries, cases) {
 }
 
 function renderTeamContent(data){
-  var assignments=(data.assignments||[]).filter(function(a){
-    if (state.privilegedNames[a.analyst_name]) return false; // supervisors/admins shouldn't skew team-wide views
+  // Team Directory now shows everyone assigned to a team — including
+  // admins/supervisors — so a team made up entirely of admins (e.g. Kirby
+  // Stars) still shows up as its own bracket, and an admin who's also part
+  // of a working team (e.g. Bronte in Trust & Safety Intel) still appears
+  // there. This only controls visibility of the member card itself; it
+  // does NOT affect the separate exclusions on the main dashboard's "All
+  // Analysts" views (PI Cases / Analyst Logged Time), which still keep
+  // admins out of those aggregate numbers.
+  var visibleAssignments=(data.assignments||[]).filter(function(a){
     if(!state.user.isSupervisor)return a.analyst_name===state.user.displayName;
     return!state.selectedSupervisor||a.supervisor_email===state.selectedSupervisor;
   });
-  renderAttentionBanner(assignments, data.entries, data.cases);
-  if(!assignments.length){document.getElementById("teamContent").innerHTML='<div class="card"><div class="empty" style="padding:3rem">No team assignments found</div></div>';return;}
+  // The Needs Attention banner is a different concern from visibility —
+  // it's a performance-flagging baseline, and an admin's meeting-heavy
+  // schedule or light case-queue presence would otherwise trip false
+  // positives unrelated to actual case work. Keep that baseline excluding
+  // privileged names, same as before.
+  var attentionAssignments = visibleAssignments.filter(function(a){ return !state.privilegedNames[a.analyst_name]; });
+  renderAttentionBanner(attentionAssignments, data.entries, data.cases);
+  if(!visibleAssignments.length){document.getElementById("teamContent").innerHTML='<div class="card"><div class="empty" style="padding:3rem">No team assignments found</div></div>';return;}
   var allCases=data.cases||[],groups={};
-  assignments.forEach(function(a){var key=a.team_name||a.supervisor_email;if(!groups[key])groups[key]={label:key,members:[]};var me=data.entries.filter(function(e){return e.analyst===a.analyst_name;}),mc=allCases.filter(function(c){return c.analyst===a.analyst_name;}),aht=ahtFromCases(mc);groups[key].members.push({name:a.analyst_name,role:a.role||"PI Analyst",totalSecs:sum(me,"duration"),util:calcUtilization(me),lastEntry:me.length?me.sort(function(a,b){return b.date.localeCompare(a.date);})[0].date:null,caseCount:mc.length,ahtSec:aht.avgSec});});
+  visibleAssignments.forEach(function(a){var key=a.team_name||a.supervisor_email;if(!groups[key])groups[key]={label:key,members:[]};var me=data.entries.filter(function(e){return e.analyst===a.analyst_name;}),mc=allCases.filter(function(c){return c.analyst===a.analyst_name;}),aht=ahtFromCases(mc);groups[key].members.push({name:a.analyst_name,role:a.role||"PI Analyst",totalSecs:sum(me,"duration"),util:calcUtilization(me),lastEntry:me.length?me.sort(function(a,b){return b.date.localeCompare(a.date);})[0].date:null,caseCount:mc.length,ahtSec:aht.avgSec});});
   document.getElementById("teamContent").innerHTML=Object.values(groups).map(function(g){return '<div class="team-section"><div class="team-section-header"><span>'+esc(g.label)+'</span><span class="badge">'+g.members.length+' Analysts</span></div><div class="team-grid">'+g.members.map(function(m){return '<div class="analyst-card" onclick="viewAnalystDetail(\''+esc(m.name)+'\')"><h3>'+esc(m.name)+'</h3><p class="role">'+esc(m.role)+'</p><div class="analyst-meta"><div class="analyst-meta-row"><span>🕐</span><span class="lbl">Total:</span> <strong>'+fmtDurationShort(m.totalSecs)+'</strong></div><div class="analyst-meta-row"><span>📊</span><span class="lbl">Utilization:</span> <strong class="'+(m.util>=75?"util-good":"util-warn")+'">'+m.util+'%</strong></div><div class="analyst-meta-row"><span>🛡️</span><span class="lbl">Cases:</span> <strong>'+m.caseCount+'</strong></div><div class="analyst-meta-row"><span>⏱️</span><span class="lbl">AHT:</span> <strong>'+fmtSeconds(m.ahtSec)+'</strong></div>'+(m.lastEntry?'<div class="analyst-meta-row"><span>📅</span><span class="lbl">Last Entry:</span> <strong>'+m.lastEntry+'</strong></div>':'')+' </div></div>';}).join("")+'</div></div>';}).join("");
 }
 
