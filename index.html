@@ -455,6 +455,7 @@ var state = {
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
   overviewActivityFilter:"all", privilegedNames:{},
+  reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null,
   taskChart:null, caseChart:null, isDark:false, usersList:[]
 };
 
@@ -1058,8 +1059,14 @@ function loadTeamData(){
   var start=document.getElementById("teamStartDate").value,end=document.getElementById("teamEndDate").value;
   if(!start||!end){toast("error","Please select a date range");return;}
   document.getElementById("teamContent").innerHTML='<div class="loading-center"><div class="spinner"></div></div>';
-  apiGet("getTeamData",{start:start,end:end}).then(function(data){
+  Promise.all([
+    apiGet("getTeamData",{start:start,end:end}),
+    apiGet("getReviewedFlags")
+  ]).then(function(results){
+    var data=results[0], reviewed=results[1];
     if(data.error){toast("error","Error: "+data.error);return;}
+    state.reviewedFlagKeys={};
+    (Array.isArray(reviewed)?reviewed:[]).forEach(function(k){ state.reviewedFlagKeys[k]=true; });
     state.teamData=data;if(!state.teamData.cases)state.teamData.cases=[];
     var analysts=[...new Set(data.entries.map(function(e){return e.analyst;}))].sort();
     var tasks=[...new Set(data.entries.map(function(e){return e.task;}))].sort();
@@ -1103,7 +1110,7 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
   Object.keys(loggedCaseDays).forEach(function(key){
     if (!casesByAnalystDate[key]) {
       var parts = key.split("|");
-      flags.push({ analyst:parts[0], message:"logged case-queue time on "+parts[1]+" but recorded 0 cases that day" });
+      flags.push({ analyst:parts[0], message:"logged case-queue time on "+parts[1]+" but recorded 0 cases that day", key:"zerocases:"+parts[0]+":"+parts[1] });
     }
   });
 
@@ -1118,7 +1125,7 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
       if (arr.length < 3) return; // not enough individual samples
       var avg = arr.reduce(function(a,b){return a+b;},0)/arr.length;
       if (avg > teamAvg*1.5) {
-        flags.push({ analyst:name, message:platform+" AHT ("+fmtSeconds(avg)+") is well above the team average ("+fmtSeconds(teamAvg)+")" });
+        flags.push({ analyst:name, message:platform+" AHT ("+fmtSeconds(avg)+") is well above the team average ("+fmtSeconds(teamAvg)+")", key:"aht:"+name+":"+platform });
       }
     });
   });
@@ -1129,18 +1136,44 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
 function renderAttentionBanner(assignments, entries, cases) {
   var el = document.getElementById("attentionBanner");
   if (!el) return;
-  var flags = computeAttentionFlags(assignments, entries, cases);
+  // Stored so markAttentionReviewed can re-render with the same inputs
+  // after a flag is marked reviewed, without recomputing from scratch.
+  state.lastAttentionArgs = { assignments: assignments, entries: entries, cases: cases };
+  var flags = computeAttentionFlags(assignments, entries, cases).filter(function(f){ return !state.reviewedFlagKeys[f.key]; });
+  state.attentionFlagsByKey = {};
+  flags.forEach(function(f){ state.attentionFlagsByKey[f.key] = f; });
   if (!flags.length) { el.innerHTML = ""; return; }
-  el.innerHTML = '<div class="card" style="border-left:4px solid hsl(45,90%,45%);margin-bottom:1.25rem">'
-    + '<div class="card-header"><h2>⚠️ Needs Attention</h2></div>'
-    + '<div class="card-body" style="display:flex;flex-direction:column;gap:.5rem">'
+  el.innerHTML = '<div class="collapsible" style="border-left:4px solid hsl(45,90%,45%);margin-bottom:1.25rem">'
+    + '<button class="collapsible-trigger open" onclick="toggleCollapsible(\'attention\')"><span>⚠️ Needs Attention ('+flags.length+')</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>'
+    + '<div class="collapsible-content open" id="attentionContent" style="display:flex;flex-direction:column;gap:.5rem;padding:0 1.5rem 1.5rem">'
     + flags.map(function(f){
         return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.5rem .75rem;background:var(--muted-bg);border-radius:.5rem">'
           + '<span style="font-size:.85rem"><strong>'+esc(f.analyst)+'</strong> — '+esc(f.message)+'</span>'
+          + '<span style="display:flex;gap:.4rem;flex-shrink:0">'
           + '<button class="btn btn-outline btn-sm" onclick="viewAnalystDetail(\''+esc(f.analyst)+'\')">View</button>'
+          + '<button class="btn btn-outline btn-sm" data-tooltip="Mark reviewed" onclick="markAttentionReviewed(\''+esc(f.key)+'\')" style="color:hsl(142,60%,40%);font-weight:700">✓</button>'
+          + '</span>'
           + '</div>';
       }).join("")
     + '</div></div>';
+}
+
+// Marks a Needs Attention flag reviewed — persisted to the Sheet (shared
+// across everyone who opens the dashboard, not per-browser), then removes
+// it from the visible list. If it's the last remaining flag, the whole
+// section disappears, same as if nothing had ever been flagged.
+function markAttentionReviewed(key){
+  var f = state.attentionFlagsByKey && state.attentionFlagsByKey[key];
+  if (!f) return;
+  apiPost({action:"markFlagReviewed", flagKey:key, analyst:f.analyst, message:f.message, callerEmail:state.user.email})
+    .then(function(res){
+      if (res && res.error) { toast("error", res.error); return; }
+      state.reviewedFlagKeys[key] = true;
+      var args = state.lastAttentionArgs || {};
+      renderAttentionBanner(args.assignments, args.entries, args.cases);
+      toast("success","Marked reviewed");
+    })
+    .catch(function(err){ toast("error","Failed: "+err); });
 }
 
 function renderTeamContent(data){
