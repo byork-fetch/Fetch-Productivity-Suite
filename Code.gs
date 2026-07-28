@@ -12,6 +12,7 @@ var SHEET_TIME_ENTRIES = "time_entries";
 var SHEET_USERS        = "users";
 var SHEET_TEAM_ASSIGN  = "team_assignments";
 var SHEET_CASES        = "Cases";
+var SHEET_ATTENTION_REVIEWS = "attention_reviews";
 var SPREADSHEET_ID     = "1Kl57TacbVJmTAJTLqJ_vVIFqTkQMxY0vC1ejBULya5M";
 var EXTENSION_SECRET   = "fetch-fraud-squad";
 // Dashboard secret — used by the GitHub Pages frontend to authenticate
@@ -130,6 +131,9 @@ function doGet(e) {
       }
       if (action === "getUserByEmail") {
         return jsonResponse(getUserByEmail(params.email));
+      }
+      if (action === "getReviewedFlags") {
+        return jsonResponse(getReviewedFlagKeys());
       }
       return jsonResponse({ error: "Unknown action: " + action });
     } catch(err) {
@@ -439,6 +443,51 @@ function generateRowId(analyst,date,startTime,task) { return ("csv_"+analyst+"_"
 
 function getOrCreateSheet(ss, name) { var s=ss.getSheetByName(name); if(!s)s=ss.insertSheet(name); return s; }
 
+// ============================================================
+// NEEDS ATTENTION — REVIEWED STATUS
+// Needs Attention flags are computed fresh client-side on every load (not
+// stored records), so "reviewed" status is tracked separately here, keyed
+// by a stable flag_key the dashboard builds (analyst+date for the
+// zero-cases flag, analyst+platform for the AHT-above-average flag — see
+// index.html's computeAttentionFlags). Shared across everyone who opens
+// the dashboard, not per-browser.
+// ============================================================
+function getReviewedFlagKeys() {
+  try {
+    return cachedCall("reviewedFlagKeys", 60, function() {
+      var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var sheet = ss.getSheetByName(SHEET_ATTENTION_REVIEWS);
+      if (!sheet || sheet.getLastRow() < 2) return [];
+      return sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues()
+        .map(function(r){ return String(r[0] || ""); })
+        .filter(function(k){ return k; });
+    });
+  } catch(e) { return []; }
+}
+
+function markFlagReviewed(flagKey, analyst, message, callerEmail) {
+  try {
+    if (!flagKey) return { error: "Missing flagKey" };
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = getOrCreateSheet(ss, SHEET_ATTENTION_REVIEWS);
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(["flag_key","analyst","message","reviewed_by","reviewed_at"]);
+      sheet.getRange(1,1,1,5).setFontWeight("bold"); sheet.setFrozenRows(1);
+    }
+    // Dedupe — if this exact flag was already marked reviewed, don't add a
+    // second row for it.
+    if (sheet.getLastRow() > 1) {
+      var existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+      for (var i = 0; i < existing.length; i++) {
+        if (existing[i][0] === flagKey) return { success: true, alreadyReviewed: true };
+      }
+    }
+    sheet.appendRow([flagKey, analyst || "", message || "", callerEmail || "", new Date().toISOString()]);
+    bumpCacheVersion();
+    return { success: true };
+  } catch(e) { return { error: e.toString() }; }
+}
+
 function debugAuth() {
   Logger.log("Active user: " + Session.getActiveUser().getEmail());
   Logger.log("Effective user: " + Session.getEffectiveUser().getEmail());
@@ -457,6 +506,9 @@ function doPost(e) {
     if (payload.dashSecret === DASHBOARD_SECRET) {
       if (payload.action === "updateTimeEntry") {
         return jsonResponse(updateTimeEntryData(payload.id, payload.updates, payload.callerEmail));
+      }
+      if (payload.action === "markFlagReviewed") {
+        return jsonResponse(markFlagReviewed(payload.flagKey, payload.analyst, payload.message, payload.callerEmail));
       }
       if (payload.action === "upsertUser") {
         return jsonResponse(upsertUserData(payload.email, payload.role, payload.displayName, payload.callerEmail));
