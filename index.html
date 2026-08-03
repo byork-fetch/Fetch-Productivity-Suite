@@ -83,6 +83,14 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .collapsible-trigger.open svg{transform:rotate(180deg);}
 .collapsible-content{display:none;padding:0 1.5rem 1.5rem;}
 .collapsible-content.open{display:block;}
+/* Needs Attention content uses a flex column layout when open, instead of
+   the default block the rest of the collapsibles use. This used to be set
+   via an inline style="display:flex" on the element itself, which — being
+   more specific than any class selector — permanently overrode the
+   .collapsible-content{display:none} rule above, so toggling the "open"
+   class never actually hid the section. Moved to a class here instead so
+   the open/closed toggle can control it like every other collapsible. */
+.attention-content.open{display:flex;flex-direction:column;gap:.5rem;}
 .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:.5rem;}
 table{width:100%;border-collapse:collapse;font-size:.83rem;min-width:700px;}
 thead{background:var(--muted-bg);}
@@ -519,6 +527,14 @@ function computePrivilegedNames(usersList){
   return set;
 }
 
+// Strictly "admin" only — distinct from state.user.isSupervisor, which the
+// backend (isPrivileged() in Code.gs) treats as true for BOTH "admin" and
+// "supervisor" roles. Needs Attention is meant to be admin-eyes-only, so it
+// needs this narrower check rather than reusing isSupervisor.
+function isAdminUser(){
+  return (state.user.role||"").toLowerCase().trim()==="admin";
+}
+
 function loadPrivilegedNames(){
   if (!state.user.isSupervisor) { state.privilegedNames = {}; return Promise.resolve(); }
   return apiGet("getAllUsers",{email:state.user.email}).then(function(users){
@@ -659,14 +675,30 @@ function getCasePeriodBounds() {
   return { start:s, end:e };
 }
 
+// "Aug 3 – Aug 9" for same-year multi-day ranges, "Aug 3" for single-day
+// (Today), "Dec 29, 2025 – Jan 4, 2026" if the range crosses a year boundary.
+// Used to append the concrete date span next to the period label so it stays
+// accurate as the underlying range silently shifts day-to-day (e.g. "This
+// Week" or "30 Days" cover different actual dates tomorrow than they do today).
+function formatDateRangeDisplay(startStr, endStr) {
+  var s = new Date(startStr+"T00:00:00"), e = new Date(endStr+"T00:00:00");
+  var opts = {month:"short", day:"numeric"};
+  if (startStr === endStr) return s.toLocaleDateString("en-US", opts);
+  if (s.getFullYear() !== e.getFullYear()) {
+    return s.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) + " – " + e.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  }
+  return s.toLocaleDateString("en-US",opts) + " – " + e.toLocaleDateString("en-US",opts) + ", " + e.getFullYear();
+}
+
 function casePeriodLabel() {
-  if (state.casePeriodMode === "today") return "Today";
-  if (state.casePeriodMode === "week")  return "This Week";
-  if (state.casePeriodMode === "30d") return "Last 30 Days";
-  if (state.casePeriodMode === "60d") return "Last 60 Days";
-  if (state.casePeriodMode === "90d") return "Last 90 Days";
   var b = getCasePeriodBounds();
-  return b.start + " – " + b.end;
+  var rangeStr = formatDateRangeDisplay(b.start, b.end);
+  if (state.casePeriodMode === "today") return "Today · " + rangeStr;
+  if (state.casePeriodMode === "week")  return "This Week · " + rangeStr;
+  if (state.casePeriodMode === "30d")   return "Last 30 Days · " + rangeStr;
+  if (state.casePeriodMode === "60d")   return "Last 60 Days · " + rangeStr;
+  if (state.casePeriodMode === "90d")   return "Last 90 Days · " + rangeStr;
+  return rangeStr; // custom — just the range itself, no need to repeat "Custom"
 }
 
 // The immediately-preceding period of the same length, used for the
@@ -1143,9 +1175,14 @@ function renderAttentionBanner(assignments, entries, cases) {
   state.attentionFlagsByKey = {};
   flags.forEach(function(f){ state.attentionFlagsByKey[f.key] = f; });
   if (!flags.length) { el.innerHTML = ""; return; }
+  // NOTE: the content div below uses the "attention-content" class (not an
+  // inline style) so the .open class toggle from toggleCollapsible() can
+  // actually control its display. An inline style="display:flex" here used
+  // to permanently override the collapsible CSS, which is why this section
+  // was stuck open before.
   el.innerHTML = '<div class="collapsible" style="border-left:4px solid hsl(45,90%,45%);margin-bottom:1.25rem">'
     + '<button class="collapsible-trigger open" onclick="toggleCollapsible(\'attention\')"><span>⚠️ Needs Attention ('+flags.length+')</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>'
-    + '<div class="collapsible-content open" id="attentionContent" style="display:flex;flex-direction:column;gap:.5rem;padding:0 1.5rem 1.5rem">'
+    + '<div class="collapsible-content attention-content open" id="attentionContent">'
     + flags.map(function(f){
         return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.5rem .75rem;background:var(--muted-bg);border-radius:.5rem">'
           + '<span style="font-size:.85rem"><strong>'+esc(f.analyst)+'</strong> — '+esc(f.message)+'</span>'
@@ -1194,8 +1231,16 @@ function renderTeamContent(data){
   // schedule or light case-queue presence would otherwise trip false
   // positives unrelated to actual case work. Keep that baseline excluding
   // privileged names, same as before.
-  var attentionAssignments = visibleAssignments.filter(function(a){ return !state.privilegedNames[a.analyst_name]; });
-  renderAttentionBanner(attentionAssignments, data.entries, data.cases);
+  // Needs Attention is admin-view only — supervisors (non-admin) no longer
+  // see this banner at all in Team Directory.
+  if (isAdminUser()) {
+    var attentionAssignments = visibleAssignments.filter(function(a){ return !state.privilegedNames[a.analyst_name]; });
+    renderAttentionBanner(attentionAssignments, data.entries, data.cases);
+  } else {
+    document.getElementById("attentionBanner").innerHTML = "";
+    state.attentionFlagsByKey = {};
+    state.lastAttentionArgs = null;
+  }
   if(!visibleAssignments.length){document.getElementById("teamContent").innerHTML='<div class="card"><div class="empty" style="padding:3rem">No team assignments found</div></div>';return;}
   var allCases=data.cases||[],groups={};
   visibleAssignments.forEach(function(a){var key=a.team_name||a.supervisor_email;if(!groups[key])groups[key]={label:key,members:[]};var me=data.entries.filter(function(e){return e.analyst===a.analyst_name;}),mc=allCases.filter(function(c){return c.analyst===a.analyst_name;}),aht=ahtFromCases(mc);groups[key].members.push({name:a.analyst_name,role:a.role||"PI Analyst",totalSecs:sum(me,"duration"),util:calcUtilization(me),lastEntry:me.length?me.sort(function(a,b){return b.date.localeCompare(a.date);})[0].date:null,caseCount:mc.length,ahtSec:aht.avgSec});});
