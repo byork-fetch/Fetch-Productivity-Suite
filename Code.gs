@@ -36,6 +36,10 @@ function isPrivileged(role) {
   return r === "admin" || r === "supervisor";
 }
 
+function isAdminRole(role) {
+  return (role || "").toLowerCase().trim() === "admin";
+}
+
 // ============================================================
 // CACHING — Sheets reads are the slowest part of every request.
 // We cache computed results (not raw sheet data) in Script Cache,
@@ -134,6 +138,9 @@ function doGet(e) {
       }
       if (action === "getReviewedFlags") {
         return jsonResponse(getReviewedFlagKeys());
+      }
+      if (action === "getReviewedFlagDetails") {
+        return jsonResponse(getReviewedFlagDetails());
       }
       return jsonResponse({ error: "Unknown action: " + action });
     } catch(err) {
@@ -465,6 +472,32 @@ function getReviewedFlagKeys() {
   } catch(e) { return []; }
 }
 
+// Full rows behind those bare keys — analyst, message, who reviewed it, and
+// when — for the dashboard's admin-only "Reviewed / Archived" section.
+// Deliberately a separate function/cache key from getReviewedFlagKeys()
+// rather than changing that function's return shape, since existing callers
+// (the Needs Attention exclusion filter) expect a plain array of key strings.
+function getReviewedFlagDetails() {
+  try {
+    return cachedCall("reviewedFlagDetails", 60, function() {
+      var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var sheet = ss.getSheetByName(SHEET_ATTENTION_REVIEWS);
+      if (!sheet || sheet.getLastRow() < 2) return [];
+      return sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues()
+        .filter(function(r){ return r[0]; })
+        .map(function(r){
+          return {
+            flag_key:    String(r[0] || ""),
+            analyst:     String(r[1] || ""),
+            message:     String(r[2] || ""),
+            reviewed_by: String(r[3] || ""),
+            reviewed_at: String(r[4] || "")
+          };
+        });
+    });
+  } catch(e) { return []; }
+}
+
 function markFlagReviewed(flagKey, analyst, message, callerEmail) {
   try {
     if (!flagKey) return { error: "Missing flagKey" };
@@ -485,6 +518,34 @@ function markFlagReviewed(flagKey, analyst, message, callerEmail) {
     sheet.appendRow([flagKey, analyst || "", message || "", callerEmail || "", new Date().toISOString()]);
     bumpCacheVersion();
     return { success: true };
+  } catch(e) { return { error: e.toString() }; }
+}
+
+// Restores an archived flag back into Needs Attention by deleting its row
+// in attention_reviews. Flags aren't stored entities in their own right —
+// they're recomputed fresh from entries/cases every load — so "restoring"
+// one is just removing the "reviewed" marker; computeAttentionFlags() on
+// the dashboard will surface it again automatically as long as the
+// underlying data (the zero-cases day, the elevated AHT, etc.) still holds.
+// Admin-only, matching the dashboard's admin-only visibility of the
+// Needs Attention / Archived sections.
+function unmarkFlagReviewed(flagKey, callerEmail) {
+  try {
+    if (!flagKey) return { error: "Missing flagKey" };
+    var record = getUserRecord(callerEmail) || {};
+    if (!isAdminRole(record.role)) return { error: "Admin only" };
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName(SHEET_ATTENTION_REVIEWS);
+    if (!sheet || sheet.getLastRow() < 2) return { success: true, notFound: true };
+    var keys = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i][0] === flagKey) {
+        sheet.deleteRow(i + 2);
+        bumpCacheVersion();
+        return { success: true };
+      }
+    }
+    return { success: true, notFound: true };
   } catch(e) { return { error: e.toString() }; }
 }
 
@@ -509,6 +570,9 @@ function doPost(e) {
       }
       if (payload.action === "markFlagReviewed") {
         return jsonResponse(markFlagReviewed(payload.flagKey, payload.analyst, payload.message, payload.callerEmail));
+      }
+      if (payload.action === "unmarkFlagReviewed") {
+        return jsonResponse(unmarkFlagReviewed(payload.flagKey, payload.callerEmail));
       }
       if (payload.action === "upsertUser") {
         return jsonResponse(upsertUserData(payload.email, payload.role, payload.displayName, payload.callerEmail));
