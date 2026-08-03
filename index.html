@@ -312,6 +312,7 @@ textarea{resize:vertical;min-height:80px;}
         </div>
       </div>
       <div id="attentionBanner"></div>
+      <div id="archivedBanner"></div>
       <div id="teamContent"><div class="loading-center"><div class="spinner"></div></div></div>
     </div>
 
@@ -463,7 +464,7 @@ var state = {
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
   overviewActivityFilter:"all", privilegedNames:{},
-  reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null,
+  reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null, archivedFlags:[],
   taskChart:null, caseChart:null, isDark:false, usersList:[]
 };
 
@@ -1091,14 +1092,18 @@ function loadTeamData(){
   var start=document.getElementById("teamStartDate").value,end=document.getElementById("teamEndDate").value;
   if(!start||!end){toast("error","Please select a date range");return;}
   document.getElementById("teamContent").innerHTML='<div class="loading-center"><div class="spinner"></div></div>';
-  Promise.all([
-    apiGet("getTeamData",{start:start,end:end}),
-    apiGet("getReviewedFlags")
-  ]).then(function(results){
-    var data=results[0], reviewed=results[1];
+  // Archived flag details (full analyst/message/reviewed_by/reviewed_at rows,
+  // not just the bare keys getReviewedFlags returns) are only needed for the
+  // admin-only Archived section, so skip the extra fetch entirely for
+  // non-admins.
+  var calls = [ apiGet("getTeamData",{start:start,end:end}), apiGet("getReviewedFlags") ];
+  if (isAdminUser()) calls.push(apiGet("getReviewedFlagDetails"));
+  Promise.all(calls).then(function(results){
+    var data=results[0], reviewed=results[1], archived=results[2];
     if(data.error){toast("error","Error: "+data.error);return;}
     state.reviewedFlagKeys={};
     (Array.isArray(reviewed)?reviewed:[]).forEach(function(k){ state.reviewedFlagKeys[k]=true; });
+    state.archivedFlags = (isAdminUser() && Array.isArray(archived)) ? archived : [];
     state.teamData=data;if(!state.teamData.cases)state.teamData.cases=[];
     var analysts=[...new Set(data.entries.map(function(e){return e.analyst;}))].sort();
     var tasks=[...new Set(data.entries.map(function(e){return e.task;}))].sort();
@@ -1213,6 +1218,48 @@ function markAttentionReviewed(key){
     .catch(function(err){ toast("error","Failed: "+err); });
 }
 
+// Read-only-by-default archive of every flag that's been marked reviewed
+// (state.archivedFlags, from getReviewedFlagDetails — full rows, not just
+// the bare keys getReviewedFlags returns). Admin-only, same gating as Needs
+// Attention. Collapsed by default since this list only grows over time.
+// Each row has a Restore button: since flags are computed fresh from
+// entries/cases rather than stored as their own records, "restoring" one
+// just means un-marking it reviewed — computeAttentionFlags() will surface
+// it again automatically as long as the underlying data still supports it.
+function renderArchivedBanner() {
+  var el = document.getElementById("archivedBanner");
+  if (!el) return;
+  if (!isAdminUser() || !state.archivedFlags || !state.archivedFlags.length) { el.innerHTML = ""; return; }
+  var rows = state.archivedFlags.slice().sort(function(a,b){ return new Date(b.reviewed_at) - new Date(a.reviewed_at); });
+  el.innerHTML = '<div class="collapsible" style="border-left:4px solid hsl(200,70%,50%);margin-bottom:1.25rem">'
+    + '<button class="collapsible-trigger" onclick="toggleCollapsible(\'archived\')"><span>🗄️ Reviewed / Archived ('+rows.length+')</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>'
+    + '<div class="collapsible-content attention-content" id="archivedContent">'
+    + rows.map(function(r){
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.5rem .75rem;background:var(--muted-bg);border-radius:.5rem">'
+          + '<span style="font-size:.85rem"><strong>'+esc(r.analyst)+'</strong> — '+esc(r.message)+'<br><span style="font-size:.72rem;color:var(--text-muted)">Reviewed by '+esc(r.reviewed_by||"–")+' · '+fmtDateTime(r.reviewed_at)+'</span></span>'
+          + '<button class="btn btn-outline btn-sm" data-tooltip="Restore to Needs Attention" onclick="restoreFlag(\''+esc(r.flag_key)+'\')" style="flex-shrink:0">↺ Restore</button>'
+          + '</div>';
+      }).join("")
+    + '</div></div>';
+}
+
+// Un-marks a flag as reviewed (deletes its row in attention_reviews) and
+// moves it back from Archived into Needs Attention, both re-rendered from
+// their existing cached inputs rather than a full reload.
+function restoreFlag(key){
+  apiPost({action:"unmarkFlagReviewed", flagKey:key, callerEmail:state.user.email})
+    .then(function(res){
+      if (res && res.error) { toast("error", res.error); return; }
+      delete state.reviewedFlagKeys[key];
+      state.archivedFlags = (state.archivedFlags||[]).filter(function(f){ return f.flag_key !== key; });
+      var args = state.lastAttentionArgs || {};
+      renderAttentionBanner(args.assignments, args.entries, args.cases);
+      renderArchivedBanner();
+      toast("success","Restored to Needs Attention");
+    })
+    .catch(function(err){ toast("error","Failed: "+err); });
+}
+
 function renderTeamContent(data){
   // Team Directory now shows everyone assigned to a team — including
   // admins/supervisors — so a team made up entirely of admins (e.g. Kirby
@@ -1231,13 +1278,15 @@ function renderTeamContent(data){
   // schedule or light case-queue presence would otherwise trip false
   // positives unrelated to actual case work. Keep that baseline excluding
   // privileged names, same as before.
-  // Needs Attention is admin-view only — supervisors (non-admin) no longer
-  // see this banner at all in Team Directory.
+  // Needs Attention (and its Archived companion) are admin-view only —
+  // supervisors (non-admin) no longer see either section in Team Directory.
   if (isAdminUser()) {
     var attentionAssignments = visibleAssignments.filter(function(a){ return !state.privilegedNames[a.analyst_name]; });
     renderAttentionBanner(attentionAssignments, data.entries, data.cases);
+    renderArchivedBanner();
   } else {
     document.getElementById("attentionBanner").innerHTML = "";
+    document.getElementById("archivedBanner").innerHTML = "";
     state.attentionFlagsByKey = {};
     state.lastAttentionArgs = null;
   }
