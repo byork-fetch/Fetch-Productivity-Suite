@@ -293,7 +293,6 @@ textarea{resize:vertical;min-height:80px;}
     <div id="view-team" style="display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:.75rem">
         <div><h2 style="font-size:1.5rem;font-weight:700">👥 Team Directory</h2><p style="font-size:.85rem;color:var(--text-muted)">Analyst performance within selected date range</p></div>
-        <button class="btn btn-outline" onclick="showView('dashboard')">← Back to Dashboard</button>
       </div>
       <div class="date-range-row">
         <label>Date Range:</label><input type="date" id="teamStartDate" class="date-input"/><span style="color:var(--text-muted)">to</span><input type="date" id="teamEndDate" class="date-input"/><button class="btn btn-primary btn-sm" onclick="loadTeamData()">Apply</button>
@@ -580,7 +579,11 @@ function bootWithUser(user) {
     document.getElementById("userMgmtBtn").style.display = "block";
   }
   document.getElementById("teamDirBtn").style.display = "block";
-  document.getElementById("teamDirBtn").addEventListener("click", function(){ showView("team"); loadTeamData(); });
+  document.getElementById("teamDirBtn").addEventListener("click", function(){
+    var onTeamView = document.getElementById("view-team").style.display !== "none";
+    if (onTeamView) { showView("dashboard"); }
+    else { showView("team"); loadTeamData(); }
+  });
   document.getElementById("userMgmtBtn").addEventListener("click", function(){ showView("users"); loadUsers(); });
   document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
   document.getElementById("monthSelect").addEventListener("change", function(){ state.selectedMonth=this.value; fetchEntries(); });
@@ -1489,7 +1492,16 @@ function saveUser(){
     .catch(function(err){toast("error",err);});
 }
 
-function showView(view){["dashboard","team","users"].forEach(function(v){document.getElementById("view-"+v).style.display=v===view?"block":"none";});}
+function showView(view){
+  ["dashboard","team","users"].forEach(function(v){document.getElementById("view-"+v).style.display=v===view?"block":"none";});
+  // teamDirBtn doubles as the way back — while on Team Directory it reads
+  // "Dashboard" instead of a separate "Back to Dashboard" button. Handled
+  // here (not just in the button's own click handler) so it stays correct
+  // no matter which path brought the user to/from this view (e.g. the
+  // Users view's own back button also goes through showView()).
+  var teamBtn = document.getElementById("teamDirBtn");
+  if (teamBtn) teamBtn.innerHTML = (view==="team") ? "🏠 Dashboard" : "👥 Team Directory";
+}
 function toggleCollapsible(id){var c=document.getElementById(id+"Content"),t=c?c.previousElementSibling:null;if(!c)return;c.classList.toggle("open");if(t)t.classList.toggle("open");}
 
 function setupTheme(){var s=localStorage?localStorage.getItem("theme"):null;if(s==="dark")applyTheme(true);document.getElementById("themeToggle").addEventListener("click",function(){applyTheme(!state.isDark);});}
