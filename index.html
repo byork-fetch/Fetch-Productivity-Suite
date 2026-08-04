@@ -512,7 +512,7 @@ var state = {
   timeLogCustomRange:{ active:false, start:null, end:null, entries:[] },
   overviewActivityFilter:"all", privilegedNames:{},
   reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null, archivedFlags:[],
-  taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsRawCases:[], isDark:false, usersList:[]
+  taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, usersList:[]
 };
 
 // ============================================================
@@ -870,13 +870,17 @@ function applyCaseFilter() {
   state.priorCases = filterCasesForCurrentScope(state.allPriorRangeCases||[]);
   updateCaseSourceFilterOptions();
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
-  if (state.trendsLoaded) renderTrendsChart(); // keep the trend chart in sync with the analyst filter without refetching
+  if (state.trendsLoaded) loadTrendsData(); // analyst scoping now happens server-side, so re-fetch (a small, fast, cached call) rather than re-filtering client-side
 }
 
 // ============================================================
 // CASE TRENDS — lazily fetched the first time the collapsible is opened
-// (not on every page load) since it needs its own wider-than-usual case
-// read (12 weeks) independent of whatever the Case Period widget is set to.
+// (not on every page load). Fetches pre-aggregated weekly summaries from
+// getCaseTrends (a handful of small {start,end,count,avgAhtMin} objects)
+// rather than every individual case for the window — at real case volumes,
+// shipping raw rows to the browser and bucketing client-side got both slow
+// and too large to cache server-side, so the aggregation now happens in
+// Code.gs instead.
 // ============================================================
 function toggleTrendsSection(){
   toggleCollapsible('trends');
@@ -886,22 +890,18 @@ function toggleTrendsSection(){
   }
 }
 
-// Sunday-start week boundaries spanning the last `weeksBack` weeks through
-// the current (in-progress) week, matching getWeekStart/getWeekEnd's
-// Sunday-start convention used everywhere else in the dashboard.
-function getTrendWeekBounds(weeksBack){
-  var now = new Date();
-  var thisWeekStart = getWeekStart(now);
-  var start = new Date(thisWeekStart.getTime() - (weeksBack-1)*7*86400000);
-  var end = getWeekEnd(now);
-  return { start: formatDate(start), end: formatDate(end) };
+// Mirrors filterCasesForCurrentScope's scoping rule, but as the single
+// param string getCaseTrends expects: a specific analyst name, or "all"
+// (server excludes admin/supervisor accounts from "all" automatically).
+function getCaseTrendsAnalystParam(){
+  if (!state.user.isSupervisor && state.user.displayName) return state.user.displayName;
+  return state.selectedAnalyst || "all";
 }
 
 function loadTrendsData(){
-  var b = getTrendWeekBounds(12);
-  apiGet("getCaseEntries", {start:b.start, end:b.end}).then(function(data){
+  apiGet("getCaseTrends", {weeksBack:12, analyst:getCaseTrendsAnalystParam()}).then(function(data){
     if (data && data.error) { toast("error","Failed to load trend data: "+data.error); return; }
-    state.trendsRawCases = Array.isArray(data) ? data : [];
+    state.trendsWeeks = Array.isArray(data) ? data : [];
     state.trendsLoaded = true;
     renderTrendsChart();
   }).catch(function(err){ toast("error","Failed: "+err); });
@@ -910,27 +910,10 @@ function loadTrendsData(){
 function renderTrendsChart(){
   var canvas = document.getElementById('trendsChart');
   if (!canvas) return;
-  var cases = filterCasesForCurrentScope(state.trendsRawCases||[]);
-  var buckets = {}; // weekStartStr -> {count, ahtSecs[]}
-  cases.forEach(function(c){
-    var ws = formatDate(getWeekStart(new Date(c.date+"T00:00:00")));
-    if (!buckets[ws]) buckets[ws] = { count:0, ahtSecs:[] };
-    buckets[ws].count++;
-    if (typeof c.handle_seconds==="number" && c.handle_seconds>0) buckets[ws].ahtSecs.push(c.handle_seconds);
-  });
-  // Build the full 12-week axis (including zero-case weeks) so the line
-  // doesn't silently skip gaps — a missing week reads very differently from
-  // a zero-case week, and this keeps that distinction visible.
-  var b = getTrendWeekBounds(12);
-  var allWeeks = [], cursor = new Date(b.start+"T00:00:00"), endDate = new Date(b.end+"T00:00:00");
-  while (cursor <= endDate) { allWeeks.push(formatDate(cursor)); cursor = new Date(cursor.getTime()+7*86400000); }
-  var labels = allWeeks.map(function(ws){ return new Date(ws+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}); });
-  var counts = allWeeks.map(function(ws){ return buckets[ws] ? buckets[ws].count : 0; });
-  var ahtMinutes = allWeeks.map(function(ws){
-    var b2 = buckets[ws];
-    if (!b2 || !b2.ahtSecs.length) return null;
-    return +(b2.ahtSecs.reduce(function(a,s){return a+s;},0)/b2.ahtSecs.length/60).toFixed(1);
-  });
+  var weeks = state.trendsWeeks || [];
+  var labels = weeks.map(function(w){ return new Date(w.start+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}); });
+  var counts = weeks.map(function(w){ return w.count; });
+  var ahtMinutes = weeks.map(function(w){ return w.avgAhtMin; });
   if (state.trendsChart) { state.trendsChart.destroy(); state.trendsChart = null; }
   var tickColor = state.isDark ? "#ccc" : "#555";
   state.trendsChart = new Chart(canvas, {
