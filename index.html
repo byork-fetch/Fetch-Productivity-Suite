@@ -310,6 +310,7 @@ textarea{resize:vertical;min-height:80px;}
     <div id="view-team" style="display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:.75rem">
         <div><h2 style="font-size:1.5rem;font-weight:700">👥 Team Directory</h2><p style="font-size:.85rem;color:var(--text-muted)">Analyst performance within selected date range</p></div>
+        <button class="btn btn-outline btn-sm" id="digestBtn" style="display:none" onclick="openDigestModal()">📧 Looking for automated reporting via email?</button>
       </div>
       <div class="date-range-row">
         <label>Date Range:</label><input type="date" id="teamStartDate" class="date-input"/><span style="color:var(--text-muted)">to</span><input type="date" id="teamEndDate" class="date-input"/><button class="btn btn-primary btn-sm" onclick="loadTeamData()">Apply</button>
@@ -331,7 +332,6 @@ textarea{resize:vertical;min-height:80px;}
         <button class="btn btn-outline btn-sm" onclick="toggleExportFilters()">🔧 Export Filters <span id="exportChevron">▼</span></button>
         <button class="btn btn-outline btn-sm" onclick="quickViewData()">👁 Quick View</button>
         <button class="btn btn-primary btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
-        <button class="btn btn-outline btn-sm" id="digestBtn" style="display:none" onclick="openDigestModal()">📧 Looking for automated reporting via email?</button>
       </div>
       <div class="export-filters" id="exportFilters">
         <div class="export-filters-grid">
