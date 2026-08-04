@@ -13,6 +13,7 @@ var SHEET_USERS        = "users";
 var SHEET_TEAM_ASSIGN  = "team_assignments";
 var SHEET_CASES        = "Cases";
 var SHEET_ATTENTION_REVIEWS = "attention_reviews";
+var SHEET_DIGEST_RECIPIENTS = "digest_recipients";
 var SPREADSHEET_ID     = "1Kl57TacbVJmTAJTLqJ_vVIFqTkQMxY0vC1ejBULya5M";
 var EXTENSION_SECRET   = "fetch-fraud-squad";
 // Dashboard secret — used by the GitHub Pages frontend to authenticate
@@ -141,6 +142,9 @@ function doGet(e) {
       }
       if (action === "getReviewedFlagDetails") {
         return jsonResponse(getReviewedFlagDetails());
+      }
+      if (action === "getDigestRecipients") {
+        return jsonResponse(getDigestRecipients(params.email));
       }
       return jsonResponse({ error: "Unknown action: " + action });
     } catch(err) {
@@ -555,6 +559,167 @@ function debugAuth() {
 }
 
 // ============================================================
+// AUTOMATED WEEKLY EMAIL DIGEST — admin-only opt-in list of recipients,
+// stored in the digest_recipients sheet. A time-driven trigger (created
+// automatically the first time someone is added, so no manual Apps Script
+// setup is needed) fires sendWeeklyDigest() every Saturday in the 10 PM
+// hour, which reads the recipient list fresh and mails a summary of the
+// current Sun–Sat week to everyone on it. Empty recipient list = trigger
+// still fires but sends nothing, which is harmless and self-correcting
+// once someone's added.
+// ============================================================
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email||"").trim());
+}
+
+function getDigestRecipients(callerEmail) {
+  try {
+    if (!isAdminRole((getUserRecord(callerEmail) || {}).role)) return { error: "Admin only" };
+    return cachedCall("digestRecipients", 60, function() {
+      var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var sheet = ss.getSheetByName(SHEET_DIGEST_RECIPIENTS);
+      if (!sheet || sheet.getLastRow() < 2) return [];
+      return sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues()
+        .filter(function(r){ return r[0]; })
+        .map(function(r){ return { email:String(r[0]||""), added_by:String(r[1]||""), added_at:String(r[2]||"") }; });
+    });
+  } catch(e) { return { error: e.toString() }; }
+}
+
+function addDigestRecipient(email, callerEmail) {
+  try {
+    var record = getUserRecord(callerEmail) || {};
+    if (!isAdminRole(record.role)) return { error: "Admin only" };
+    email = String(email||"").trim().toLowerCase();
+    if (!isValidEmail(email)) return { error: "Please enter a valid email address" };
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = getOrCreateSheet(ss, SHEET_DIGEST_RECIPIENTS);
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(["email","added_by","added_at"]);
+      sheet.getRange(1,1,1,3).setFontWeight("bold"); sheet.setFrozenRows(1);
+    }
+    if (sheet.getLastRow() > 1) {
+      var existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+      for (var i = 0; i < existing.length; i++) {
+        if (String(existing[i][0]||"").toLowerCase() === email) return { success: true, alreadyAdded: true };
+      }
+    }
+    sheet.appendRow([email, callerEmail || "", new Date().toISOString()]);
+    ensureDigestTriggerExists();
+    bumpCacheVersion();
+    return { success: true };
+  } catch(e) { return { error: e.toString() }; }
+}
+
+function removeDigestRecipient(email, callerEmail) {
+  try {
+    if (!isAdminRole((getUserRecord(callerEmail) || {}).role)) return { error: "Admin only" };
+    email = String(email||"").trim().toLowerCase();
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName(SHEET_DIGEST_RECIPIENTS);
+    if (!sheet || sheet.getLastRow() < 2) return { success: true, notFound: true };
+    var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][0]||"").toLowerCase() === email) {
+        sheet.deleteRow(i + 2);
+        bumpCacheVersion();
+        return { success: true };
+      }
+    }
+    return { success: true, notFound: true };
+  } catch(e) { return { error: e.toString() }; }
+}
+
+// Creates the Saturday 10 PM(ish) trigger exactly once — checked by handler
+// function name so re-adding recipients later never creates duplicates.
+// atHour(22) fires somewhere in the 22:00–23:00 window (Apps Script's
+// time-based triggers are approximate, not to-the-minute), in the script's
+// own timezone (Session.getScriptTimeZone()), which satisfies "Saturday
+// after 10 PM" without needing an exact-minute guarantee.
+function ensureDigestTriggerExists() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "sendWeeklyDigest") return; // already set up
+  }
+  ScriptApp.newTrigger("sendWeeklyDigest")
+    .timeBased()
+    .onWeekDay(ScriptApp.WeekDay.SATURDAY)
+    .atHour(22)
+    .create();
+}
+
+function _digestGetWeekStart(d) {
+  var s = new Date(d); s.setDate(d.getDate() - d.getDay()); s.setHours(0,0,0,0); return s;
+}
+function _digestFormatDate(d) {
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
+
+// The function the Saturday trigger actually calls. No callerEmail here —
+// it runs unattended, so recipient-list access bypasses the admin-only
+// gate getDigestRecipients() normally enforces (there's no "caller" to
+// check) and reads the sheet directly instead.
+function sendWeeklyDigest() {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var recipSheet = ss.getSheetByName(SHEET_DIGEST_RECIPIENTS);
+    if (!recipSheet || recipSheet.getLastRow() < 2) return; // no one signed up yet — nothing to do
+    var recipients = recipSheet.getRange(2, 1, recipSheet.getLastRow() - 1, 1).getValues()
+      .map(function(r){ return String(r[0]||"").trim(); })
+      .filter(function(e){ return isValidEmail(e); });
+    if (!recipients.length) return;
+
+    var now = new Date();
+    var weekStart = _digestGetWeekStart(now);
+    var weekStartStr = _digestFormatDate(weekStart), todayStr = _digestFormatDate(now);
+
+    var cases = _readAllCases(weekStartStr, todayStr).filter(function(c){ return !isHiddenRosterName(c.analyst); });
+    var byPlatform = { Kount:{count:0,ahtSecs:[]}, Zendesk:{count:0,ahtSecs:[]}, RADAR:{count:0,ahtSecs:[]} };
+    var byAnalyst = {};
+    cases.forEach(function(c){
+      if (byPlatform[c.platform]) {
+        byPlatform[c.platform].count++;
+        if (typeof c.handle_seconds==="number" && c.handle_seconds>0) byPlatform[c.platform].ahtSecs.push(c.handle_seconds);
+      }
+      byAnalyst[c.analyst] = (byAnalyst[c.analyst]||0) + 1;
+    });
+    var topAnalysts = Object.keys(byAnalyst).map(function(name){ return {name:name, count:byAnalyst[name]}; })
+      .sort(function(a,b){ return b.count-a.count; }).slice(0,3);
+
+    function avgMin(secs) { if (!secs.length) return null; return Math.round(secs.reduce(function(a,b){return a+b;},0)/secs.length/60*10)/10; }
+
+    var platformRows = ["Kount","Zendesk","RADAR"].map(function(p){
+      var d = byPlatform[p];
+      return '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee">'+p+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+d.count+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+(avgMin(d.ahtSecs)!=null?avgMin(d.ahtSecs)+' min':'—')+'</td></tr>';
+    }).join("");
+
+    var topRows = topAnalysts.length ? topAnalysts.map(function(a,i){
+      return '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee">'+(i+1)+'. '+a.name+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+a.count+' cases</td></tr>';
+    }).join("") : '<tr><td style="padding:6px 12px;color:#888" colspan="2">No cases logged this week</td></tr>';
+
+    var totalCases = cases.length;
+    var html = '<div style="font-family:Arial,sans-serif;color:#222;max-width:520px">'
+      + '<h2 style="margin-bottom:4px">PI Productivity Suite — Weekly Digest</h2>'
+      + '<p style="color:#666;margin-top:0">'+weekStartStr+' – '+todayStr+' · '+totalCases+' total cases</p>'
+      + '<h3 style="margin-bottom:6px">By Platform</h3>'
+      + '<table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #333">Platform</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Cases</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Avg AHT</th></tr></thead><tbody>'
+      + platformRows + '</tbody></table>'
+      + '<h3 style="margin:20px 0 6px">Top Analysts This Week</h3>'
+      + '<table style="border-collapse:collapse;width:100%;font-size:14px"><tbody>' + topRows + '</tbody></table>'
+      + '<p style="color:#888;font-size:12px;margin-top:24px">Sent automatically every Saturday. Manage recipients from the dashboard\'s Team Directory (admin only).</p>'
+      + '</div>';
+
+    MailApp.sendEmail({
+      to: recipients.join(","),
+      subject: "PI Productivity Suite — Weekly Digest (" + weekStartStr + " – " + todayStr + ")",
+      htmlBody: html
+    });
+  } catch(e) {
+    Logger.log("sendWeeklyDigest failed: " + e.toString());
+  }
+}
+
+// ============================================================
 // doPost — extension sync + dashboard mutations
 // ============================================================
 function doPost(e) {
@@ -579,6 +744,12 @@ function doPost(e) {
       }
       if (payload.action === "importCSV") {
         return jsonResponse(importCSVData(payload.csvText, payload.callerEmail));
+      }
+      if (payload.action === "addDigestRecipient") {
+        return jsonResponse(addDigestRecipient(payload.email, payload.callerEmail));
+      }
+      if (payload.action === "removeDigestRecipient") {
+        return jsonResponse(removeDigestRecipient(payload.email, payload.callerEmail));
       }
       return jsonResponse({ error: "Unknown action" });
     }
