@@ -655,6 +655,91 @@ function _digestFormatDate(d) {
   return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd");
 }
 
+// Mirrors PLATFORM_TASK_MAP in index.html — kept as a separate server-side
+// copy rather than shared, since the dashboard's version lives in client
+// JS and isn't reachable from Apps Script.
+var DIGEST_PLATFORM_TASK_MAP = { Kount: "Rules Review", Zendesk: "Dispute Review", RADAR: "RADAR" };
+
+// Server-side port of index.html's computeAttentionFlags(), scoped to a
+// rolling 42-day window (same span Team Directory defaults to) and
+// excluding flags already marked reviewed — so this is the same "open flag"
+// count an admin would see if they opened the dashboard right now. Returns
+// a count only; the digest doesn't need per-flag detail, just "how many
+// need a look."
+function _digestComputeOpenAttentionFlagCount() {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var taSheet = ss.getSheetByName(SHEET_TEAM_ASSIGN);
+    if (!taSheet || taSheet.getLastRow() < 2) return 0;
+    var validNames = {};
+    taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 1).getValues().forEach(function(r){
+      if (r[0] && !isHiddenRosterName(r[0])) validNames[r[0].toString()] = true;
+    });
+
+    var end = new Date(), start = new Date(end.getTime() - 42*86400000);
+    var startStr = _digestFormatDate(start), endStr = _digestFormatDate(end);
+
+    var entriesRaw = getTimeEntries(startStr, endStr);
+    var entries = (Array.isArray(entriesRaw) ? entriesRaw : []).filter(function(e){ return validNames[e.analyst]; });
+    var cases = _readAllCases(startStr, endStr).filter(function(c){ return validNames[c.analyst]; });
+
+    var caseTaskNames = Object.keys(DIGEST_PLATFORM_TASK_MAP).map(function(k){ return DIGEST_PLATFORM_TASK_MAP[k]; });
+    var casesByAnalystDate = {};
+    cases.forEach(function(c){ var k=c.analyst+"|"+c.date; casesByAnalystDate[k]=(casesByAnalystDate[k]||0)+1; });
+    var loggedCaseDays = {};
+    entries.forEach(function(e){
+      if (caseTaskNames.indexOf(e.task)===-1) return;
+      if (!(e.duration>0)) return;
+      loggedCaseDays[e.analyst+"|"+e.date] = true;
+    });
+    var flagKeys = [];
+    Object.keys(loggedCaseDays).forEach(function(key){
+      if (!casesByAnalystDate[key]) {
+        var parts = key.split("|");
+        flagKeys.push("zerocases:"+parts[0]+":"+parts[1]);
+      }
+    });
+
+    ["Kount","Zendesk","RADAR"].forEach(function(platform){
+      var teamTimed = cases.filter(function(c){ return c.platform===platform && typeof c.handle_seconds==="number" && c.handle_seconds>0; });
+      if (teamTimed.length < 5) return;
+      var teamAvg = teamTimed.reduce(function(a,c){return a+c.handle_seconds;},0)/teamTimed.length;
+      var byAnalyst = {};
+      teamTimed.forEach(function(c){ (byAnalyst[c.analyst]=byAnalyst[c.analyst]||[]).push(c.handle_seconds); });
+      Object.keys(byAnalyst).forEach(function(name){
+        var arr = byAnalyst[name];
+        if (arr.length < 3) return;
+        var avg = arr.reduce(function(a,b){return a+b;},0)/arr.length;
+        if (avg > teamAvg*1.5) flagKeys.push("aht:"+name+":"+platform);
+      });
+    });
+
+    var reviewed = {};
+    getReviewedFlagKeys().forEach(function(k){ reviewed[k]=true; });
+    return flagKeys.filter(function(k){ return !reviewed[k]; }).length;
+  } catch(e) { return 0; }
+}
+
+// Case volume + avg AHT for each of the last `weeksBack` Sunday-start weeks,
+// oldest first, ending with the current (possibly partial) week. Used for
+// the digest's week-over-week trend table.
+function _digestGetWeeklyStats(weeksBack) {
+  var now = new Date();
+  var thisWeekStart = _digestGetWeekStart(now);
+  var weeks = [];
+  for (var i = weeksBack - 1; i >= 0; i--) {
+    var ws = new Date(thisWeekStart.getTime() - i*7*86400000);
+    var we = new Date(ws.getTime() + 6*86400000);
+    if (we > now) we = now; // cap the current week's end at "now" rather than querying into the future
+    var wsStr = _digestFormatDate(ws), weStr = _digestFormatDate(we);
+    var cases = _readAllCases(wsStr, weStr).filter(function(c){ return !isHiddenRosterName(c.analyst); });
+    var ahtSecs = cases.filter(function(c){ return typeof c.handle_seconds==="number" && c.handle_seconds>0; }).map(function(c){ return c.handle_seconds; });
+    var avgAhtMin = ahtSecs.length ? Math.round(ahtSecs.reduce(function(a,b){return a+b;},0)/ahtSecs.length/60*10)/10 : null;
+    weeks.push({ start: wsStr, end: weStr, count: cases.length, avgAhtMin: avgAhtMin });
+  }
+  return weeks;
+}
+
 // The function the Saturday trigger actually calls. No callerEmail here —
 // it runs unattended, so recipient-list access bypasses the admin-only
 // gate getDigestRecipients() normally enforces (there's no "caller" to
@@ -697,13 +782,37 @@ function sendWeeklyDigest() {
       return '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee">'+(i+1)+'. '+a.name+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+a.count+' cases</td></tr>';
     }).join("") : '<tr><td style="padding:6px 12px;color:#888" colspan="2">No cases logged this week</td></tr>';
 
+    var attentionCount = _digestComputeOpenAttentionFlagCount();
+    var attentionBanner = attentionCount > 0
+      ? '<p style="background:#fff3cd;color:#7a5b00;padding:10px 14px;border-radius:6px;font-weight:600;margin:0 0 20px">⚠️ '+attentionCount+' Needs Attention flag'+(attentionCount===1?'':'s')+' awaiting review on the dashboard</p>'
+      : '<p style="background:#e6f4ea;color:#1e6b34;padding:10px 14px;border-radius:6px;font-weight:600;margin:0 0 20px">✅ No open Needs Attention flags</p>';
+
+    var weeklyStats = _digestGetWeeklyStats(4);
+    var trendRows = weeklyStats.map(function(w, idx){
+      var deltaStr = "";
+      if (idx > 0) {
+        var prev = weeklyStats[idx-1];
+        var diff = w.count - prev.count;
+        if (diff !== 0) {
+          var arrow = diff > 0 ? "▲" : "▼";
+          var pct = prev.count ? Math.round(Math.abs(diff)/prev.count*100) : null;
+          deltaStr = ' <span style="color:'+(diff>0?'#1e8a3a':'#c0392b')+';font-size:12px">'+arrow+(pct!=null?' '+pct+'%':'')+'</span>';
+        }
+      }
+      return '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee">'+w.start+' – '+w.end+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+w.count+deltaStr+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+(w.avgAhtMin!=null?w.avgAhtMin+' min':'—')+'</td></tr>';
+    }).join("");
+
     var totalCases = cases.length;
     var html = '<div style="font-family:Arial,sans-serif;color:#222;max-width:520px">'
       + '<h2 style="margin-bottom:4px">PI Productivity Suite — Weekly Digest</h2>'
-      + '<p style="color:#666;margin-top:0">'+weekStartStr+' – '+todayStr+' · '+totalCases+' total cases</p>'
-      + '<h3 style="margin-bottom:6px">By Platform</h3>'
+      + '<p style="color:#666;margin:0 0 16px">'+weekStartStr+' – '+todayStr+' · '+totalCases+' total cases</p>'
+      + attentionBanner
+      + '<h3 style="margin-bottom:6px">By Platform (This Week)</h3>'
       + '<table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #333">Platform</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Cases</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Avg AHT</th></tr></thead><tbody>'
       + platformRows + '</tbody></table>'
+      + '<h3 style="margin:20px 0 6px">4-Week Trend</h3>'
+      + '<table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #333">Week</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Cases</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Avg AHT</th></tr></thead><tbody>'
+      + trendRows + '</tbody></table>'
       + '<h3 style="margin:20px 0 6px">Top Analysts This Week</h3>'
       + '<table style="border-collapse:collapse;width:100%;font-size:14px"><tbody>' + topRows + '</tbody></table>'
       + '<p style="color:#888;font-size:12px;margin-top:24px">Sent automatically every Saturday. Manage recipients from the dashboard\'s Team Directory (admin only).</p>'
