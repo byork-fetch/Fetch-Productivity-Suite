@@ -1748,9 +1748,12 @@ function loadDigestRecipients(){
 function renderDigestRecipientList(list){
   var el = document.getElementById("digestRecipientList");
   if (!list.length) { el.innerHTML = '<div class="empty">No recipients yet — add one above.</div>'; return; }
-  el.innerHTML = '<table><tbody>' + list.map(function(r){
-    return '<tr><td style="font-size:.85rem">'+esc(r.email)+'</td><td style="text-align:right"><button class="btn btn-outline btn-sm" onclick="removeDigestRecipientUI(\''+esc(r.email)+'\')">Remove</button></td></tr>';
-  }).join("") + '</tbody></table>';
+  el.innerHTML = list.map(function(r){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.5rem .75rem;border-bottom:1px solid var(--border)">'
+      + '<span style="font-size:.85rem;word-break:break-all">'+esc(r.email)+'</span>'
+      + '<button class="btn btn-outline btn-sm" style="flex-shrink:0" onclick="removeDigestRecipientUI(\''+esc(r.email)+'\')">Remove</button>'
+      + '</div>';
+  }).join("");
 }
 
 function addDigestRecipientUI(){
