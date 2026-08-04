@@ -146,6 +146,9 @@ function doGet(e) {
       if (action === "getDigestRecipients") {
         return jsonResponse(getDigestRecipients(params.email));
       }
+      if (action === "getCaseTrends") {
+        return jsonResponse(getCaseTrends(params.weeksBack, params.analyst));
+      }
       return jsonResponse({ error: "Unknown action: " + action });
     } catch(err) {
       return jsonResponse({ error: err.toString() });
@@ -718,6 +721,63 @@ function _digestComputeOpenAttentionFlagCount() {
     getReviewedFlagKeys().forEach(function(k){ reviewed[k]=true; });
     return flagKeys.filter(function(k){ return !reviewed[k]; }).length;
   } catch(e) { return 0; }
+}
+
+// ============================================================
+// CASE TRENDS (dashboard) — powers the "Case Trends (Last 12 Weeks)" chart.
+// Aggregates weekly case volume + avg AHT server-side and returns only the
+// small per-week summary rows, instead of the old approach of shipping
+// every individual case for the whole window to the browser and bucketing
+// there. At real-world case volumes that raw payload easily runs into the
+// megabytes, which is both slow over the wire and too large for
+// CacheService to cache at all (100KB per-key limit) — so every chart open
+// was redoing a full uncached sheet scan. The aggregated result here is a
+// few dozen small objects regardless of case volume, so it comfortably
+// fits in cache and stays fast even as the Cases sheet keeps growing.
+// analystFilter mirrors the dashboard's own case-scoping rule: a specific
+// analyst name narrows to just them; "all" (or omitted) excludes admin/
+// supervisor accounts from the aggregate, same as the "All Analysts" view
+// does elsewhere via privilegedNames.
+function getCaseTrends(weeksBack, analystFilter) {
+  try {
+    weeksBack = parseInt(weeksBack, 10) || 12;
+    analystFilter = analystFilter || "all";
+    return cachedCall("caseTrends:" + weeksBack + ":" + analystFilter, 300, function() {
+      var now = new Date();
+      var thisWeekStart = _digestGetWeekStart(now);
+      var weeks = [];
+      for (var i = weeksBack - 1; i >= 0; i--) {
+        var ws = new Date(thisWeekStart.getTime() - i*7*86400000);
+        var we = new Date(ws.getTime() + 6*86400000);
+        if (we > now) we = now; // cap the current week's end at "now" rather than querying into the future
+        weeks.push({ start: _digestFormatDate(ws), end: _digestFormatDate(we) });
+      }
+      var overallStart = weeks[0].start, overallEnd = weeks[weeks.length-1].end;
+      var cases = _readAllCases(overallStart, overallEnd).filter(function(c){ return !isHiddenRosterName(c.analyst); });
+
+      if (analystFilter !== "all") {
+        cases = cases.filter(function(c){ return c.analyst === analystFilter; });
+      } else {
+        var privileged = {};
+        var usersSheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_USERS);
+        if (usersSheet && usersSheet.getLastRow() > 1) {
+          usersSheet.getRange(2, 1, usersSheet.getLastRow() - 1, 3).getValues().forEach(function(r){
+            if (isPrivileged(r[1])) privileged[String(r[2]||"")] = true;
+          });
+        }
+        cases = cases.filter(function(c){ return !privileged[c.analyst]; });
+      }
+
+      return weeks.map(function(w){
+        var inWeek = cases.filter(function(c){ return c.date >= w.start && c.date <= w.end; });
+        var ahtSecs = inWeek.filter(function(c){ return typeof c.handle_seconds==="number" && c.handle_seconds>0; }).map(function(c){ return c.handle_seconds; });
+        return {
+          start: w.start, end: w.end, count: inWeek.length,
+          avgAhtMin: ahtSecs.length ? Math.round(ahtSecs.reduce(function(a,b){return a+b;},0)/ahtSecs.length/60*10)/10 : null
+        };
+      });
+    });
+  } catch(e) { return { error: e.toString() }; }
 }
 
 // Case volume + avg AHT for each of the last `weeksBack` Sunday-start weeks,
