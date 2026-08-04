@@ -242,8 +242,23 @@ textarea{resize:vertical;min-height:80px;}
         </div>
       </div>
       <div class="collapsible">
+        <button class="collapsible-trigger" onclick="toggleTrendsSection()"><span>📈 Case Trends (Last 12 Weeks)</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="collapsible-content" id="trendsContent">
+          <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:1rem">Weekly case volume and average handle time — scoped to whichever analyst is currently selected.</p>
+          <div class="chart-wrap" style="height:300px"><canvas id="trendsChart"></canvas></div>
+        </div>
+      </div>
+      <div class="collapsible">
         <button class="collapsible-trigger" onclick="toggleCollapsible('timeLog')"><span>Detailed Time Log</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
         <div class="collapsible-content" id="timeLogContent">
+          <div class="date-range-row" style="margin-bottom:1rem">
+            <label>Custom range (overrides Reporting Period below):</label>
+            <input type="date" id="timeLogCustomStart" class="date-input"/>
+            <span style="color:var(--text-muted)">to</span>
+            <input type="date" id="timeLogCustomEnd" class="date-input"/>
+            <button class="btn btn-primary btn-sm" onclick="applyTimeLogCustomRange()">Apply</button>
+            <button class="btn btn-outline btn-sm" id="timeLogCustomClearBtn" style="display:none" onclick="clearTimeLogCustomRange()">✕ Clear</button>
+          </div>
           <div class="export-filters-grid" style="margin-bottom:1rem">
             <div class="form-group"><label>Analyst</label><select id="timeLogAnalystFilter" class="form-select"><option value="all">All Analysts</option></select></div>
             <div class="form-group"><label>Activity / Status</label><select id="timeLogActivityFilter" class="form-select"><option value="all">All Activities</option></select></div>
@@ -264,6 +279,7 @@ textarea{resize:vertical;min-height:80px;}
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:.75rem">
             <div class="platform-filter-row" id="casePlatformFilterRow" style="margin:0"></div>
             <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+              <select id="caseSourceFilterSelect" class="form-select" style="width:auto"><option value="all">All Sources</option></select>
               <input type="text" id="caseSearchInput" class="date-input" placeholder="Search Case ID…" style="width:160px"/>
               <button class="btn btn-outline btn-sm" onclick="exportCaseLogCSV()">⬇ Export CSV</button>
             </div>
@@ -299,10 +315,23 @@ textarea{resize:vertical;min-height:80px;}
         <label>Date Range:</label><input type="date" id="teamStartDate" class="date-input"/><span style="color:var(--text-muted)">to</span><input type="date" id="teamEndDate" class="date-input"/><button class="btn btn-primary btn-sm" onclick="loadTeamData()">Apply</button>
       </div>
       <div id="supervisorFilters" class="tabs" style="margin-bottom:1rem"></div>
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">
+        <label style="font-size:.82rem;font-weight:600;color:var(--text-muted)">Sort by:</label>
+        <select id="teamSortSelect" class="form-select" style="width:auto">
+          <option value="name">Name (A–Z)</option>
+          <option value="aht_asc">AHT (fastest first)</option>
+          <option value="aht_desc">AHT (slowest first)</option>
+          <option value="util_desc">Utilization (highest first)</option>
+          <option value="util_asc">Utilization (lowest first)</option>
+          <option value="cases_desc">Cases (most first)</option>
+          <option value="cases_asc">Cases (fewest first)</option>
+        </select>
+      </div>
       <div class="export-row">
         <button class="btn btn-outline btn-sm" onclick="toggleExportFilters()">🔧 Export Filters <span id="exportChevron">▼</span></button>
         <button class="btn btn-outline btn-sm" onclick="quickViewData()">👁 Quick View</button>
         <button class="btn btn-primary btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
+        <button class="btn btn-outline btn-sm" id="digestBtn" style="display:none" onclick="openDigestModal()">📧 Looking for automated reporting via email?</button>
       </div>
       <div class="export-filters" id="exportFilters">
         <div class="export-filters-grid">
@@ -368,6 +397,23 @@ textarea{resize:vertical;min-height:80px;}
       <div class="table-wrap" style="border:none;border-radius:0;overflow:visible"><table id="quickViewTable"><thead></thead><tbody></tbody></table></div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="document.getElementById('quickViewModal').classList.remove('open')">Close</button></div>
+  </div>
+</div>
+
+<!-- DIGEST MODAL -->
+<div class="modal-backdrop" id="digestModal">
+  <div class="modal">
+    <div class="modal-header"><button class="modal-close" onclick="closeDigestModal()">×</button><h2>📧 Automated Weekly Reports</h2><p>A summary email is sent automatically every Saturday evening (after 10 PM) to everyone below.</p></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group" style="grid-column:1 / -1"><label>Add Email</label><input type="email" id="digest_new_email" placeholder="name@fetchrewards.com"/></div>
+      </div>
+      <div class="form-group">
+        <label>Current Recipients</label>
+        <div id="digestRecipientList" class="table-wrap" style="max-height:220px;overflow-y:auto"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeDigestModal()">Close</button><button class="btn btn-primary" onclick="addDigestRecipientUI()">+ Add</button></div>
   </div>
 </div>
 
@@ -459,13 +505,14 @@ var state = {
   user:null, entries:[], allMonthEntries:[], allRangeCases:[], cases:[],
   selectedMonth:"", selectedAnalyst:"all", sortField:"date", sortDir:"desc",
   caseSortField:"date", caseSortDir:"desc", editEntry:null,
-  casePlatformFilter:"all", casePeriodMode:"week", casePeriodStart:null, casePeriodEnd:null,
-  teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null,
+  casePlatformFilter:"all", caseSourceFilter:"all", casePeriodMode:"week", casePeriodStart:null, casePeriodEnd:null,
+  teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null, teamSortMode:"name",
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
+  timeLogCustomRange:{ active:false, start:null, end:null, entries:[] },
   overviewActivityFilter:"all", privilegedNames:{},
   reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null, archivedFlags:[],
-  taskChart:null, caseChart:null, isDark:false, usersList:[]
+  taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsRawCases:[], isDark:false, usersList:[]
 };
 
 // ============================================================
@@ -487,6 +534,7 @@ function loadFilterPrefs(){
     if (p.casePeriodStart) state.casePeriodStart = p.casePeriodStart;
     if (p.casePeriodEnd) state.casePeriodEnd = p.casePeriodEnd;
     if (p.casePlatformFilter) state.casePlatformFilter = p.casePlatformFilter;
+    if (p.caseSourceFilter) state.caseSourceFilter = p.caseSourceFilter;
     if (p.caseSearchQuery) state.caseSearchQuery = p.caseSearchQuery;
     if (p.timeLogAnalystFilter) state.timeLogAnalystFilter = p.timeLogAnalystFilter;
     if (p.timeLogActivityFilter) state.timeLogActivityFilter = p.timeLogActivityFilter;
@@ -502,6 +550,7 @@ function persistFilterPrefs(){
       casePeriodStart: state.casePeriodStart,
       casePeriodEnd: state.casePeriodEnd,
       casePlatformFilter: state.casePlatformFilter,
+      caseSourceFilter: state.caseSourceFilter,
       caseSearchQuery: state.caseSearchQuery,
       timeLogAnalystFilter: state.timeLogAnalystFilter,
       timeLogActivityFilter: state.timeLogActivityFilter,
@@ -579,6 +628,9 @@ function bootWithUser(user) {
     document.getElementById("analystFilter").style.display = "block";
     document.getElementById("userMgmtBtn").style.display = "block";
   }
+  if (isAdminUser()) {
+    document.getElementById("digestBtn").style.display = "inline-flex";
+  }
   document.getElementById("teamDirBtn").style.display = "block";
   document.getElementById("teamDirBtn").addEventListener("click", function(){
     var onTeamView = document.getElementById("view-team").style.display !== "none";
@@ -593,6 +645,8 @@ function bootWithUser(user) {
   document.getElementById("overviewActivityFilter").addEventListener("change", function(){ state.overviewActivityFilter=this.value; persistFilterPrefs(); renderAnalystTable(); renderChart(); });
   document.getElementById("caseSearchInput").value = state.caseSearchQuery || "";
   document.getElementById("caseSearchInput").addEventListener("input", function(){ state.caseSearchQuery=this.value; persistFilterPrefs(); renderCaseLog(); });
+  document.getElementById("caseSourceFilterSelect").addEventListener("change", function(){ state.caseSourceFilter=this.value; persistFilterPrefs(); renderCaseLog(); });
+  document.getElementById("teamSortSelect").addEventListener("change", function(){ state.teamSortMode=this.value; renderTeamContent(state.teamData); });
   document.getElementById("signOutBtn").addEventListener("click", function(){
     clearSession();
     if (typeof google!=="undefined"&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect();
@@ -659,6 +713,40 @@ function fetchEntries() {
     if (data&&data.error){toast("error","Fetch error: "+data.error);return;}
     state.allMonthEntries=data||[]; updateAnalystFilterOptions(); applyAnalystFilter(); updatePeriodDesc(s,e);
   }).catch(function(err){toast("error","Failed: "+err);});
+}
+
+// ============================================================
+// DETAILED TIME LOG — CUSTOM RANGE
+// Independent of the Reporting Period month selector, same relationship the
+// Case Period widget already has to it. Only affects the Detailed Time Log
+// table itself (and the Analyst/Activity dropdowns immediately above it) —
+// Time by Task, Analyst Logged Time, and the stat cards keep using the
+// Reporting Period month regardless, since those are a different question
+// ("how's this month looking") from "let me pull an arbitrary range of raw
+// entries."
+// ============================================================
+function applyTimeLogCustomRange() {
+  var s = document.getElementById("timeLogCustomStart").value, e = document.getElementById("timeLogCustomEnd").value;
+  if (!s || !e) { toast("error","Please select both start and end dates"); return; }
+  if (s > e) { toast("error","Start date must be before end date"); return; }
+  document.getElementById("timeLogBody").innerHTML='<tr><td colspan="7" class="empty"><div class="spinner" style="margin:auto"></div></td></tr>';
+  apiGet("getTimeEntries",{start:s,end:e}).then(function(data){
+    if (data && data.error) { toast("error","Fetch error: "+data.error); return; }
+    state.timeLogCustomRange = { active:true, start:s, end:e, entries: data||[] };
+    document.getElementById("timeLogCustomClearBtn").style.display = "inline-flex";
+    updateTimeLogFilterOptions();
+    renderTimeLog();
+    toast("success","Showing "+s+" – "+e);
+  }).catch(function(err){ toast("error","Failed: "+err); });
+}
+
+function clearTimeLogCustomRange() {
+  state.timeLogCustomRange = { active:false, start:null, end:null, entries:[] };
+  document.getElementById("timeLogCustomStart").value = "";
+  document.getElementById("timeLogCustomEnd").value = "";
+  document.getElementById("timeLogCustomClearBtn").style.display = "none";
+  updateTimeLogFilterOptions();
+  renderTimeLog();
 }
 
 // ============================================================
@@ -780,13 +868,117 @@ function filterCasesForCurrentScope(cases) {
 function applyCaseFilter() {
   state.cases = filterCasesForCurrentScope(state.allRangeCases);
   state.priorCases = filterCasesForCurrentScope(state.allPriorRangeCases||[]);
+  updateCaseSourceFilterOptions();
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
+  if (state.trendsLoaded) renderTrendsChart(); // keep the trend chart in sync with the analyst filter without refetching
+}
+
+// ============================================================
+// CASE TRENDS — lazily fetched the first time the collapsible is opened
+// (not on every page load) since it needs its own wider-than-usual case
+// read (12 weeks) independent of whatever the Case Period widget is set to.
+// ============================================================
+function toggleTrendsSection(){
+  toggleCollapsible('trends');
+  var content = document.getElementById('trendsContent');
+  if (content && content.classList.contains('open') && !state.trendsLoaded) {
+    loadTrendsData();
+  }
+}
+
+// Sunday-start week boundaries spanning the last `weeksBack` weeks through
+// the current (in-progress) week, matching getWeekStart/getWeekEnd's
+// Sunday-start convention used everywhere else in the dashboard.
+function getTrendWeekBounds(weeksBack){
+  var now = new Date();
+  var thisWeekStart = getWeekStart(now);
+  var start = new Date(thisWeekStart.getTime() - (weeksBack-1)*7*86400000);
+  var end = getWeekEnd(now);
+  return { start: formatDate(start), end: formatDate(end) };
+}
+
+function loadTrendsData(){
+  var b = getTrendWeekBounds(12);
+  apiGet("getCaseEntries", {start:b.start, end:b.end}).then(function(data){
+    if (data && data.error) { toast("error","Failed to load trend data: "+data.error); return; }
+    state.trendsRawCases = Array.isArray(data) ? data : [];
+    state.trendsLoaded = true;
+    renderTrendsChart();
+  }).catch(function(err){ toast("error","Failed: "+err); });
+}
+
+function renderTrendsChart(){
+  var canvas = document.getElementById('trendsChart');
+  if (!canvas) return;
+  var cases = filterCasesForCurrentScope(state.trendsRawCases||[]);
+  var buckets = {}; // weekStartStr -> {count, ahtSecs[]}
+  cases.forEach(function(c){
+    var ws = formatDate(getWeekStart(new Date(c.date+"T00:00:00")));
+    if (!buckets[ws]) buckets[ws] = { count:0, ahtSecs:[] };
+    buckets[ws].count++;
+    if (typeof c.handle_seconds==="number" && c.handle_seconds>0) buckets[ws].ahtSecs.push(c.handle_seconds);
+  });
+  // Build the full 12-week axis (including zero-case weeks) so the line
+  // doesn't silently skip gaps — a missing week reads very differently from
+  // a zero-case week, and this keeps that distinction visible.
+  var b = getTrendWeekBounds(12);
+  var allWeeks = [], cursor = new Date(b.start+"T00:00:00"), endDate = new Date(b.end+"T00:00:00");
+  while (cursor <= endDate) { allWeeks.push(formatDate(cursor)); cursor = new Date(cursor.getTime()+7*86400000); }
+  var labels = allWeeks.map(function(ws){ return new Date(ws+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}); });
+  var counts = allWeeks.map(function(ws){ return buckets[ws] ? buckets[ws].count : 0; });
+  var ahtMinutes = allWeeks.map(function(ws){
+    var b2 = buckets[ws];
+    if (!b2 || !b2.ahtSecs.length) return null;
+    return +(b2.ahtSecs.reduce(function(a,s){return a+s;},0)/b2.ahtSecs.length/60).toFixed(1);
+  });
+  if (state.trendsChart) { state.trendsChart.destroy(); state.trendsChart = null; }
+  var tickColor = state.isDark ? "#ccc" : "#555";
+  state.trendsChart = new Chart(canvas, {
+    type: "line",
+    data: { labels: labels, datasets: [
+      { label:"Cases", data:counts, borderColor:"hsl(220,80%,55%)", backgroundColor:"hsl(220,80%,55%)", yAxisID:"y", tension:.3 },
+      { label:"Avg AHT (min)", data:ahtMinutes, borderColor:"hsl(45,90%,45%)", backgroundColor:"hsl(45,90%,45%)", yAxisID:"y1", tension:.3, spanGaps:true }
+    ]},
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:"index",intersect:false},
+      plugins:{legend:{labels:{color:tickColor}}},
+      scales:{
+        y:{ position:"left", beginAtZero:true, title:{display:true,text:"Cases",color:tickColor}, ticks:{color:tickColor,precision:0} },
+        y1:{ position:"right", beginAtZero:true, title:{display:true,text:"Avg AHT (min)",color:tickColor}, grid:{drawOnChartArea:false}, ticks:{color:tickColor} },
+        x:{ ticks:{color:tickColor} }
+      }
+    }
+  });
+}
+
+// Rebuilds the Source dropdown from whatever sources actually appear in the
+// currently loaded case set, same pattern as updateTimeLogFilterOptions.
+// Keeps the current selection if it's still a valid option, otherwise
+// falls back to "All Sources" rather than silently clearing to nothing.
+function updateCaseSourceFilterOptions(){
+  var sel = document.getElementById("caseSourceFilterSelect");
+  if (!sel) return;
+  var sources = [...new Set(state.cases.map(function(c){ return c.source; }).filter(function(s){ return s; }))].sort();
+  var keep = sources.indexOf(state.caseSourceFilter) !== -1 ? state.caseSourceFilter : "all";
+  state.caseSourceFilter = keep;
+  sel.innerHTML = '<option value="all">All Sources</option>' + sources.map(function(s){ return '<option value="'+esc(s)+'">'+esc(s)+'</option>'; }).join("");
+  sel.value = keep;
+}
+
+// Scopes a raw entries array to what the current user/analyst-filter should
+// see — same rule set applyAnalystFilter uses for state.allMonthEntries, but
+// extracted so the Detailed Time Log's independent custom range (which
+// fetches its own entries outside the Reporting Period month) can apply the
+// identical scoping without duplicating the branching logic.
+function scopeEntriesForCurrentUser(entries){
+  if (!state.user.isSupervisor && state.user.displayName) return entries.filter(function(e){return e.analyst===state.user.displayName;});
+  if (state.selectedAnalyst==="all") return entries.filter(function(e){return !state.privilegedNames[e.analyst];});
+  return entries.filter(function(e){return e.analyst===state.selectedAnalyst;});
 }
 
 function applyAnalystFilter() {
-  if (!state.user.isSupervisor&&state.user.displayName) state.entries=state.allMonthEntries.filter(function(e){return e.analyst===state.user.displayName;});
-  else if (state.selectedAnalyst==="all") state.entries=state.allMonthEntries.filter(function(e){return !state.privilegedNames[e.analyst];});
-  else state.entries=state.allMonthEntries.filter(function(e){return e.analyst===state.selectedAnalyst;});
+  state.entries = scopeEntriesForCurrentUser(state.allMonthEntries);
   updateTimeLogFilterOptions();
   updateOverviewFilterOptions();
   renderStats(); renderAnalystTable(); renderTimeLog(); renderEditedSection(); renderChart(); renderCaseStats(); renderIdleGaps();
@@ -896,10 +1088,18 @@ function computeCaseOutlierFlags(cases) {
   return flags;
 }
 
-function renderCaseLog() {
+// Shared by renderCaseLog and exportCaseLogCSV so platform/source/search
+// filtering logic lives in exactly one place.
+function getFilteredCaseLogRows(){
   var filtered = state.casePlatformFilter === "all" ? state.cases : state.cases.filter(function(c){ return c.platform === state.casePlatformFilter; });
+  if (state.caseSourceFilter !== "all") filtered = filtered.filter(function(c){ return c.source === state.caseSourceFilter; });
   var q = (state.caseSearchQuery||"").trim().toLowerCase();
   if (q) filtered = filtered.filter(function(c){ return String(c.case_id||"").toLowerCase().indexOf(q)!==-1; });
+  return filtered;
+}
+
+function renderCaseLog() {
+  var filtered = getFilteredCaseLogRows();
   var sorted=filtered.slice().sort(function(a,b){var f=state.caseSortField,dir=state.caseSortDir==="asc"?1:-1,av=a[f],bv=b[f];if(typeof av==="number"||typeof bv==="number")return((av||0)-(bv||0))*dir;return String(av||"").localeCompare(String(bv||""))*dir;});
   var outliers = computeCaseOutlierFlags(state.cases); // flag against the whole visible period/platform set, not just the search/sort result
   document.getElementById("caseLogBody").innerHTML=sorted.length===0?'<tr><td colspan="6" class="empty">No cases match filters</td></tr>':sorted.map(function(c){
@@ -916,9 +1116,7 @@ function renderCaseLog() {
 }
 
 function exportCaseLogCSV(){
-  var filtered = state.casePlatformFilter === "all" ? state.cases : state.cases.filter(function(c){ return c.platform === state.casePlatformFilter; });
-  var q = (state.caseSearchQuery||"").trim().toLowerCase();
-  if (q) filtered = filtered.filter(function(c){ return String(c.case_id||"").toLowerCase().indexOf(q)!==-1; });
+  var filtered = getFilteredCaseLogRows();
   if (!filtered.length) { toast("error","No cases to export"); return; }
   var headers=["Date","Analyst","Platform","Case ID","Source","Handle Time (seconds)","Handle Time"];
   var rows=filtered.map(function(c){return [c.date,c.analyst,c.platform,c.case_id,c.source||"",c.handle_seconds!=null?c.handle_seconds:"",fmtSeconds(c.handle_seconds)];});
@@ -948,11 +1146,19 @@ function renderChart(){
   state.taskChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:labels.map(function(_,i){return colors[i%colors.length];}),borderRadius:6}]},options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return " "+fmtDurationShort(Math.round(ctx.raw*3600));}}}},scales:{x:{title:{display:true,text:"Hours"},ticks:{color:state.isDark?"#ccc":"#555"}},y:{grid:{display:false},ticks:{color:state.isDark?"#ccc":"#555",font:{size:11}}}},responsive:true,maintainAspectRatio:false}});
 }
 
+// The entry set the Detailed Time Log's own Analyst/Activity dropdowns and
+// table are built from — the independent custom range if one is applied,
+// otherwise the Reporting Period month's entries as usual.
+function getTimeLogSourceEntries(){
+  return state.timeLogCustomRange.active ? scopeEntriesForCurrentUser(state.timeLogCustomRange.entries) : state.entries;
+}
+
 function updateTimeLogFilterOptions(){
   var analystSel=document.getElementById("timeLogAnalystFilter"), activitySel=document.getElementById("timeLogActivityFilter");
   if(!analystSel||!activitySel) return;
-  var analysts=[...new Set(state.entries.map(function(e){return e.analyst;}))].sort();
-  var activities=[...new Set(state.entries.map(function(e){return e.task;}))].sort();
+  var src = getTimeLogSourceEntries();
+  var analysts=[...new Set(src.map(function(e){return e.analyst;}))].sort();
+  var activities=[...new Set(src.map(function(e){return e.task;}))].sort();
   var keepAnalyst=analysts.indexOf(state.timeLogAnalystFilter)!==-1?state.timeLogAnalystFilter:"all";
   var keepActivity=activities.indexOf(state.timeLogActivityFilter)!==-1?state.timeLogActivityFilter:"all";
   state.timeLogAnalystFilter=keepAnalyst; state.timeLogActivityFilter=keepActivity;
@@ -984,7 +1190,7 @@ function getOverviewEntries(){
 }
 
 function renderTimeLog(){
-  var filtered=state.entries.filter(function(e){
+  var filtered=getTimeLogSourceEntries().filter(function(e){
     if(state.timeLogAnalystFilter!=="all"&&e.analyst!==state.timeLogAnalystFilter) return false;
     if(state.timeLogActivityFilter!=="all"&&e.task!==state.timeLogActivityFilter) return false;
     return true;
@@ -1297,7 +1503,30 @@ function renderTeamContent(data){
   if(!visibleAssignments.length){document.getElementById("teamContent").innerHTML='<div class="card"><div class="empty" style="padding:3rem">No team assignments found</div></div>';return;}
   var allCases=data.cases||[],groups={};
   visibleAssignments.forEach(function(a){var key=a.team_name||a.supervisor_email;if(!groups[key])groups[key]={label:key,members:[]};var me=data.entries.filter(function(e){return e.analyst===a.analyst_name;}),mc=allCases.filter(function(c){return c.analyst===a.analyst_name;}),aht=ahtFromCases(mc);groups[key].members.push({name:a.analyst_name,role:a.role||"PI Analyst",totalSecs:sum(me,"duration"),util:calcUtilization(me),lastEntry:me.length?me.sort(function(a,b){return b.date.localeCompare(a.date);})[0].date:null,caseCount:mc.length,ahtSec:aht.avgSec});});
+  sortTeamMembers(Object.values(groups));
   document.getElementById("teamContent").innerHTML=Object.values(groups).map(function(g){return '<div class="team-section"><div class="team-section-header"><span>'+esc(g.label)+'</span><span class="badge">'+g.members.length+' Analysts</span></div><div class="team-grid">'+g.members.map(function(m){return '<div class="analyst-card" onclick="viewAnalystDetail(\''+esc(m.name)+'\')"><h3>'+esc(m.name)+'</h3><p class="role">'+esc(m.role)+'</p><div class="analyst-meta"><div class="analyst-meta-row"><span>🕐</span><span class="lbl">Total:</span> <strong>'+fmtDurationShort(m.totalSecs)+'</strong></div><div class="analyst-meta-row"><span>📊</span><span class="lbl">Utilization:</span> <strong class="'+(m.util>=75?"util-good":"util-warn")+'">'+m.util+'%</strong></div><div class="analyst-meta-row"><span>🛡️</span><span class="lbl">Cases:</span> <strong>'+m.caseCount+'</strong></div><div class="analyst-meta-row"><span>⏱️</span><span class="lbl">AHT:</span> <strong>'+fmtSeconds(m.ahtSec)+'</strong></div>'+(m.lastEntry?'<div class="analyst-meta-row"><span>📅</span><span class="lbl">Last Entry:</span> <strong>'+m.lastEntry+'</strong></div>':'')+' </div></div>';}).join("")+'</div></div>';}).join("");
+}
+
+// Sorts each team group's members array in place according to
+// state.teamSortMode. AHT sorting treats null (no timed cases yet) as
+// "worst" so untimed analysts sink to the bottom of an ascending sort and
+// float to the top of a descending one — either way they don't silently
+// get lost mixed in with real numbers.
+function sortTeamMembers(groups){
+  var mode = state.teamSortMode || "name";
+  groups.forEach(function(g){
+    g.members.sort(function(a,b){
+      switch(mode){
+        case "aht_asc":    return (a.ahtSec==null?Infinity:a.ahtSec) - (b.ahtSec==null?Infinity:b.ahtSec);
+        case "aht_desc":   return (b.ahtSec==null?-1:b.ahtSec) - (a.ahtSec==null?-1:a.ahtSec);
+        case "util_desc":  return b.util - a.util;
+        case "util_asc":   return a.util - b.util;
+        case "cases_desc": return b.caseCount - a.caseCount;
+        case "cases_asc":  return a.caseCount - b.caseCount;
+        default:           return a.name.localeCompare(b.name);
+      }
+    });
+  });
 }
 
 // Maps a platform name to the Toggl task name it's logged under, so we can
@@ -1493,6 +1722,61 @@ function saveUser(){
     .catch(function(err){toast("error",err);});
 }
 
+// ============================================================
+// AUTOMATED WEEKLY EMAIL DIGEST — admin-only recipient management. The
+// actual send is entirely server-side (a Saturday time-driven trigger
+// calling sendWeeklyDigest() in Code.gs); this UI only adds/removes rows
+// in the digest_recipients sheet that trigger reads from.
+// ============================================================
+function openDigestModal(){
+  document.getElementById("digest_new_email").value = "";
+  document.getElementById("digestModal").classList.add("open");
+  loadDigestRecipients();
+}
+function closeDigestModal(){
+  document.getElementById("digestModal").classList.remove("open");
+}
+
+function loadDigestRecipients(){
+  document.getElementById("digestRecipientList").innerHTML = '<div class="empty"><div class="spinner" style="margin:auto"></div></div>';
+  apiGet("getDigestRecipients", {email: state.user.email}).then(function(list){
+    if (list && list.error) { toast("error", list.error); document.getElementById("digestRecipientList").innerHTML = '<div class="empty">'+esc(list.error)+'</div>'; return; }
+    renderDigestRecipientList(Array.isArray(list) ? list : []);
+  }).catch(function(err){ toast("error","Failed: "+err); });
+}
+
+function renderDigestRecipientList(list){
+  var el = document.getElementById("digestRecipientList");
+  if (!list.length) { el.innerHTML = '<div class="empty">No recipients yet — add one above.</div>'; return; }
+  el.innerHTML = '<table><tbody>' + list.map(function(r){
+    return '<tr><td style="font-size:.85rem">'+esc(r.email)+'</td><td style="text-align:right"><button class="btn btn-outline btn-sm" onclick="removeDigestRecipientUI(\''+esc(r.email)+'\')">Remove</button></td></tr>';
+  }).join("") + '</tbody></table>';
+}
+
+function addDigestRecipientUI(){
+  var input = document.getElementById("digest_new_email");
+  var email = input.value.trim();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast("error","Please enter a valid email address"); return; }
+  apiPost({action:"addDigestRecipient", email:email, callerEmail:state.user.email})
+    .then(function(res){
+      if (res && res.error) { toast("error", res.error); return; }
+      input.value = "";
+      toast("success", res && res.alreadyAdded ? "Already on the list" : "Added");
+      loadDigestRecipients();
+    })
+    .catch(function(err){ toast("error","Failed: "+err); });
+}
+
+function removeDigestRecipientUI(email){
+  apiPost({action:"removeDigestRecipient", email:email, callerEmail:state.user.email})
+    .then(function(res){
+      if (res && res.error) { toast("error", res.error); return; }
+      toast("success","Removed");
+      loadDigestRecipients();
+    })
+    .catch(function(err){ toast("error","Failed: "+err); });
+}
+
 function showView(view){
   ["dashboard","team","users"].forEach(function(v){document.getElementById("view-"+v).style.display=v===view?"block":"none";});
   // teamDirBtn doubles as the way back — while on Team Directory it reads
@@ -1506,7 +1790,7 @@ function showView(view){
 function toggleCollapsible(id){var c=document.getElementById(id+"Content"),t=c?c.previousElementSibling:null;if(!c)return;c.classList.toggle("open");if(t)t.classList.toggle("open");}
 
 function setupTheme(){var s=localStorage?localStorage.getItem("theme"):null;if(s==="dark")applyTheme(true);document.getElementById("themeToggle").addEventListener("click",function(){applyTheme(!state.isDark);});}
-function applyTheme(dark){state.isDark=dark;document.body.classList.toggle("dark",dark);document.getElementById("themeToggle").textContent=dark?"☀️":"🌙";if(localStorage)localStorage.setItem("theme",dark?"dark":"light");if(state.taskChart)renderChart();if(state.caseChart)renderCaseChart();}
+function applyTheme(dark){state.isDark=dark;document.body.classList.toggle("dark",dark);document.getElementById("themeToggle").textContent=dark?"☀️":"🌙";if(localStorage)localStorage.setItem("theme",dark?"dark":"light");if(state.taskChart)renderChart();if(state.caseChart)renderCaseChart();if(state.trendsLoaded)renderTrendsChart();}
 
 function setDefaultDateRanges(){var t=new Date(),s=new Date(t.getTime()-42*86400000);document.getElementById("teamStartDate").value=formatDate(s);document.getElementById("teamEndDate").value=formatDate(t);}
 function updatePeriodDesc(s,e){var sd=new Date(s+"T00:00:00"),ed=new Date(e+"T00:00:00");document.getElementById("periodDesc").textContent=sd.toLocaleDateString("en-US",{month:"short",day:"numeric"})+" – "+ed.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});}
