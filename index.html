@@ -26,7 +26,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #login-screen{display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--bg);}
 #login-screen.visible{display:flex;}
 .login-card{background:var(--card);border:1px solid var(--border);border-radius:1.25rem;padding:3rem 2.5rem;width:100%;max-width:420px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.08);}
-.login-logo{width:72px;height:72px;border-radius:1rem;background:var(--gradient);display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;font-size:2rem;}
+.login-logo{width:88px;height:88px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;margin:0 auto 1.5rem;}
+.login-logo img{width:100%;height:100%;object-fit:cover;}
 .login-title{font-size:1.5rem;font-weight:700;margin-bottom:.35rem;}
 .login-sub{font-size:.9rem;color:var(--text-muted);margin-bottom:2rem;}
 #g_id_signin{display:flex;justify-content:center;}
@@ -171,7 +172,7 @@ textarea{resize:vertical;min-height:80px;}
 <!-- LOGIN -->
 <div id="login-screen">
   <div class="login-card">
-    <div class="login-logo">📊</div>
+    <div class="login-logo"><img src="fraudteamlogo.webp" alt="Team logo"/></div>
     <h1 class="login-title">PI Productivity Suite</h1>
     <p class="login-sub">Sign in with your Fetch Rewards Google account to continue.</p>
     <div id="g_id_onload" data-client_id="422172167913-rv8addd23lt5085c9ha235sblcpih199.apps.googleusercontent.com" data-callback="handleGoogleSignIn" data-auto_prompt="false"></div>
