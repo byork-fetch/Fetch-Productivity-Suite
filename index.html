@@ -59,6 +59,26 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .stat-sub{font-size:.75rem;color:var(--text-muted);margin-top:.2rem;}
 .main-grid{display:grid;grid-template-columns:1fr 320px;gap:1.5rem;margin-bottom:1.5rem;}
 @media(max-width:900px){.main-grid{grid-template-columns:1fr;}}
+/* CASES BY PLATFORM / CASE PERFORMANCE — scoped so these two cards match
+   height, whichever is naturally taller. Grid already stretches the row's
+   items to the tallest one's height by default (align-items:stretch); the
+   piece that was missing is that neither card's *internal* content actually
+   filled that stretched height, so the shorter card (the chart) just left
+   blank space below its own border while the taller card (the analyst list,
+   capped at 420px) extended further down. Turning both cards (and their
+   card-bodies) into flex columns lets the shorter side's content actually
+   grow to fill the stretched height instead of stopping short of it. This
+   is intentionally scoped to .cases-grid only — the other main-grid
+   sections (Reporting Period/Time by Task vs Analyst Logged Time) are left
+   as-is since nobody asked to change those.
+*/
+.cases-grid{align-items:stretch;}
+.cases-grid .left-col{display:flex;flex-direction:column;}
+.cases-grid .left-col .card{flex:1;display:flex;flex-direction:column;}
+.cases-grid .left-col .card-body{flex:1;display:flex;flex-direction:column;min-height:220px;}
+.cases-grid>.card{display:flex;flex-direction:column;}
+.cases-grid>.card .card-body{flex:1;display:flex;flex-direction:column;min-height:0;}
+.cases-grid>.card .analyst-table{flex:1;min-height:0;}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
 .card-header{padding:1.25rem 1.5rem .75rem;border-bottom:1px solid var(--border);}
 .card-header h2{font-size:1rem;font-weight:600;}
@@ -232,7 +252,7 @@ textarea{resize:vertical;min-height:80px;}
         <button class="btn btn-primary btn-sm" onclick="applyCasePeriodCustom()">Apply</button>
       </div>
       <p id="casePeriodDesc" style="font-size:.8rem;color:var(--text-muted);margin:-0.5rem 0 1rem"></p>
-      <div class="main-grid">
+      <div class="main-grid cases-grid">
         <div class="left-col">
           <div class="card"><div class="card-header"><h2>Cases by Platform</h2></div><div class="card-body chart-wrap"><canvas id="caseChart"></canvas></div></div>
         </div>
@@ -1018,7 +1038,12 @@ function renderCaseChart() {
   var counts={Kount:0,Zendesk:0,RADAR:0};
   state.cases.forEach(function(c){if(counts[c.platform]!==undefined)counts[c.platform]++;});
   var labels=Object.keys(counts), values=labels.map(function(k){return counts[k];});
-  canvas.style.height="260px";
+  // NOTE: no longer sets a fixed canvas.style.height here — the .chart-wrap
+  // parent is now a flex:1 child inside .cases-grid (see CSS), so it's
+  // already stretched to match the Case Performance card's height. Chart.js
+  // (responsive:true, maintainAspectRatio:false below) reads that parent's
+  // actual rendered height via ResizeObserver and sizes the canvas to fill
+  // it, so a fixed pixel height here would just fight the flex layout.
   if (state.caseChart){state.caseChart.destroy();state.caseChart=null;}
   if (values.every(function(v){return v===0;})){canvas.parentElement.innerHTML='<p class="empty">No cases for this period</p>';return;}
   state.caseChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:["hsl(220,80%,55%)","hsl(160,55%,40%)","hsl(45,90%,45%)"],borderRadius:6}]},options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0,color:state.isDark?"#ccc":"#555"}},x:{ticks:{color:state.isDark?"#ccc":"#555"},grid:{display:false}}},responsive:true,maintainAspectRatio:false}});
