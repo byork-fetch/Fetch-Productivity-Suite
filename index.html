@@ -212,6 +212,8 @@ textarea{resize:vertical;min-height:80px;}
       <div class="header-actions">
         <button id="themeToggle" class="btn btn-ghost" title="Toggle theme">🌙</button>
         <select id="analystFilter" class="select-ghost" style="display:none"><option value="all">All Analysts</option></select>
+        <select id="teamFilterHeader" class="select-ghost" style="display:none"><option value="all">All Teams</option></select>
+        <select id="roleFilterHeader" class="select-ghost" style="display:none"><option value="all">All Roles</option></select>
         <button id="teamDirBtn" class="btn btn-ghost" style="display:none">👥 Team Directory</button>
         <button id="userMgmtBtn" class="btn btn-ghost" style="display:none">⚙️ Users</button>
         <button id="signOutBtn" class="btn btn-ghost">👤 Sign Out</button>
@@ -232,7 +234,7 @@ textarea{resize:vertical;min-height:80px;}
           </div>
           <div class="card" style="margin-bottom:1.25rem">
             <div class="card-header"><h2>Time by Task</h2></div>
-            <div class="card-body chart-wrap chart-wrap-scroll"><canvas id="taskChart"></canvas></div>
+            <div class="card-body chart-wrap chart-wrap-scroll"><canvas id="taskChart"></canvas><div id="taskChartEmpty" class="empty" style="display:none">No data for this period</div></div>
           </div>
         </div>
         <div class="card">
@@ -254,7 +256,7 @@ textarea{resize:vertical;min-height:80px;}
       <p id="casePeriodDesc" style="font-size:.8rem;color:var(--text-muted);margin:-0.5rem 0 1rem"></p>
       <div class="main-grid cases-grid">
         <div class="left-col">
-          <div class="card"><div class="card-header"><h2>Cases by Platform</h2></div><div class="card-body chart-wrap"><canvas id="caseChart"></canvas></div></div>
+          <div class="card"><div class="card-header"><h2>Cases by Platform</h2></div><div class="card-body chart-wrap"><canvas id="caseChart"></canvas><div id="caseChartEmpty" class="empty" style="display:none">No cases for this period</div></div></div>
         </div>
         <div class="card">
           <div class="card-header"><h2>Case Performance</h2><p style="font-size:.8rem;color:var(--text-muted);margin-top:.2rem">cases solved · avg handle time</p></div>
@@ -528,6 +530,8 @@ var state = {
   caseSortField:"date", caseSortDir:"desc", editEntry:null,
   casePlatformFilter:"all", caseSourceFilter:"all", casePeriodMode:"week", casePeriodStart:null, casePeriodEnd:null,
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null, selectedRole:null, teamSortMode:"name",
+  assignments:[], analystTeamMap:{}, analystRoleMap:{}, hiddenAssignmentNames:{},
+  dashboardTeamFilter:"all", dashboardRoleFilter:"all",
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
   timeLogCustomRange:{ active:false, start:null, end:null, entries:[] },
@@ -560,6 +564,8 @@ function loadFilterPrefs(){
     if (p.timeLogAnalystFilter) state.timeLogAnalystFilter = p.timeLogAnalystFilter;
     if (p.timeLogActivityFilter) state.timeLogActivityFilter = p.timeLogActivityFilter;
     if (p.overviewActivityFilter) state.overviewActivityFilter = p.overviewActivityFilter;
+    if (p.dashboardTeamFilter) state.dashboardTeamFilter = p.dashboardTeamFilter;
+    if (p.dashboardRoleFilter) state.dashboardRoleFilter = p.dashboardRoleFilter;
     if (p.selectedAnalyst) state._savedSelectedAnalyst = p.selectedAnalyst; // applied conditionally in bootWithUser
   } catch(e) { /* ignore corrupt/unavailable storage */ }
 }
@@ -576,9 +582,90 @@ function persistFilterPrefs(){
       timeLogAnalystFilter: state.timeLogAnalystFilter,
       timeLogActivityFilter: state.timeLogActivityFilter,
       overviewActivityFilter: state.overviewActivityFilter,
+      dashboardTeamFilter: state.dashboardTeamFilter,
+      dashboardRoleFilter: state.dashboardRoleFilter,
       selectedAnalyst: state.selectedAnalyst
     }));
   } catch(e) { /* ignore — not critical if this fails */ }
+}
+
+// ============================================================
+// HIDDEN TEAMS / ROLES — internal admin/coordinator groupings that should
+// never appear as filter options or as members anywhere in Team Directory
+// or the Dashboard's "All"/aggregate views (they can still be found by
+// picking their name directly in the header Analyst dropdown, same as any
+// other privileged account). Matched against team_assignments columns C
+// (team_name) and D (role) exactly as stored in the Sheet.
+//
+// NOTE: "Sr Platform Integrity Intel Spec" below is a best guess — the
+// source screenshot had the middle of that label covered by a marker
+// X, showing only "Sr Plat Integ…ntel Spec". If members of that role are
+// still showing up anywhere they shouldn't, this is almost certainly why:
+// check team_assignments column D for the exact string and fix it here.
+// ============================================================
+var HIDDEN_TEAM_NAMES  = ["Trust & Safety Intel", "Kirby Stars"];
+var HIDDEN_ROLE_LABELS = ["Fraud Ops Coordinator", "QA Coordinator", "Sr Platform Integrity Intel Spec", "Training Coordinator"];
+
+function isHiddenAssignment(a){
+  var team = (a.team_name || a.supervisor_email || "").trim();
+  if (HIDDEN_TEAM_NAMES.indexOf(team) !== -1) return true;
+  if (HIDDEN_ROLE_LABELS.indexOf(getEffectiveRole(a)) !== -1) return true;
+  return false;
+}
+
+// ============================================================
+// ASSIGNMENTS CONTEXT — team_assignments rows fetched once at boot
+// (date-range-independent, via the lightweight getAssignments action) so
+// the Dashboard's Team/Role filters have something to populate from
+// without waiting on a full getTeamData() call. Team Directory keeps
+// fetching its own copy per date range via getTeamData() as before — this
+// is purely additive, for the Dashboard's use.
+// ============================================================
+function loadAssignments(){
+  return apiGet("getAssignments").then(function(list){
+    state.assignments = Array.isArray(list) ? list : [];
+    state.analystTeamMap = {};
+    state.analystRoleMap = {};
+    state.hiddenAssignmentNames = {};
+    state.assignments.forEach(function(a){
+      state.analystTeamMap[normName(a.analyst_name)] = a.team_name || a.supervisor_email;
+      state.analystRoleMap[normName(a.analyst_name)] = getEffectiveRole(a);
+      if (isHiddenAssignment(a)) state.hiddenAssignmentNames[normName(a.analyst_name)] = true;
+    });
+    updateDashboardTeamRoleFilterOptions();
+  }).catch(function(){
+    state.assignments = []; state.analystTeamMap = {}; state.analystRoleMap = {}; state.hiddenAssignmentNames = {};
+  });
+}
+
+function loadTeamRoleContext(){
+  if (!state.user.isSupervisor) { state.assignments=[]; state.analystTeamMap={}; state.analystRoleMap={}; state.hiddenAssignmentNames={}; return Promise.resolve(); }
+  return loadAssignments();
+}
+
+function updateDashboardTeamRoleFilterOptions(){
+  var teamSel = document.getElementById("teamFilterHeader"), roleSel = document.getElementById("roleFilterHeader");
+  if (!teamSel || !roleSel) return;
+  var visible = state.assignments.filter(function(a){ return !isHiddenAssignment(a); });
+  var teams = [...new Set(visible.map(function(a){ return a.team_name || a.supervisor_email; }))].sort();
+  var roles = [...new Set(visible.map(getEffectiveRole))].sort();
+  var keepTeam = teams.indexOf(state.dashboardTeamFilter) !== -1 ? state.dashboardTeamFilter : "all";
+  var keepRole = roles.indexOf(state.dashboardRoleFilter) !== -1 ? state.dashboardRoleFilter : "all";
+  state.dashboardTeamFilter = keepTeam; state.dashboardRoleFilter = keepRole;
+  teamSel.innerHTML = '<option value="all">All Teams</option>' + teams.map(function(t){ return '<option value="'+esc(t)+'">'+esc(t)+'</option>'; }).join("");
+  roleSel.innerHTML = '<option value="all">All Roles</option>' + roles.map(function(r){ return '<option value="'+esc(r)+'">'+esc(r)+'</option>'; }).join("");
+  teamSel.value = keepTeam; roleSel.value = keepRole;
+}
+
+// Whether an analyst (by name) passes the Dashboard's Team/Role header
+// filters, when set to something other than "all". Only meaningful for the
+// "All Analysts" aggregate — a specifically-selected analyst bypasses this
+// (same precedence the existing Analyst dropdown already has).
+function passesDashboardTeamRoleFilter(name){
+  var key = normName(name);
+  if (state.dashboardTeamFilter && state.dashboardTeamFilter !== "all" && state.analystTeamMap[key] !== state.dashboardTeamFilter) return false;
+  if (state.dashboardRoleFilter && state.dashboardRoleFilter !== "all" && state.analystRoleMap[key] !== state.dashboardRoleFilter) return false;
+  return true;
 }
 
 // ============================================================
@@ -589,11 +676,21 @@ function persistFilterPrefs(){
 // aggregate: "All Analysts" on the dashboard, "All Teams"/per-team views in
 // Team Directory, and the Needs Attention banner's team-average baseline.
 // ============================================================
+// Normalizes a name for matching across sheets (time_entries.analyst,
+// users.display_name, team_assignments.analyst_name). These are three
+// independently-typed free-text fields, so a stray trailing space or a
+// capitalization difference between them was silently breaking the
+// privileged/hidden-name exclusion — the set lookup never matched, and the
+// account quietly stayed in the "All Analysts" aggregate with no error
+// anywhere. Comparing normalized forms everywhere these names are keyed or
+// looked up makes that class of mismatch a non-issue.
+function normName(s){ return String(s||"").trim().toLowerCase(); }
+
 function computePrivilegedNames(usersList){
   var set = {};
   (usersList||[]).forEach(function(u){
     var r = (u.role||"").toLowerCase().trim();
-    if (r==="admin" || r==="supervisor") set[u.display_name] = true;
+    if (r==="admin" || r==="supervisor") set[normName(u.display_name)] = true;
   });
   return set;
 }
@@ -647,6 +744,8 @@ function bootWithUser(user) {
   else if (state._savedSelectedAnalyst) state.selectedAnalyst = state._savedSelectedAnalyst;
   if (state.user.isSupervisor) {
     document.getElementById("analystFilter").style.display = "block";
+    document.getElementById("teamFilterHeader").style.display = "block";
+    document.getElementById("roleFilterHeader").style.display = "block";
     document.getElementById("userMgmtBtn").style.display = "block";
   }
   if (isAdminUser()) {
@@ -660,6 +759,8 @@ function bootWithUser(user) {
   });
   document.getElementById("userMgmtBtn").addEventListener("click", function(){ showView("users"); loadUsers(); });
   document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
+  document.getElementById("teamFilterHeader").addEventListener("change", function(){ state.dashboardTeamFilter=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
+  document.getElementById("roleFilterHeader").addEventListener("change", function(){ state.dashboardRoleFilter=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
   document.getElementById("monthSelect").addEventListener("change", function(){ state.selectedMonth=this.value; fetchEntries(); });
   document.getElementById("timeLogAnalystFilter").addEventListener("change", function(){ state.timeLogAnalystFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
   document.getElementById("timeLogActivityFilter").addEventListener("change", function(){ state.timeLogActivityFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
@@ -673,12 +774,25 @@ function bootWithUser(user) {
     if (typeof google!=="undefined"&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect();
     window.location.reload();
   });
+  // loadTeamRoleContext() is intentionally NOT in this chain. It's a new,
+  // separate Sheets read (getAssignments) that's uncached on first call —
+  // gating the initial months/cases load behind it (as an earlier version
+  // of this file did via Promise.all) added a real, sometimes-multi-second
+  // delay before "Cases by Platform" had anything to render, which is why
+  // it looked like it "wasn't loading quickly enough or at all." It now
+  // runs in parallel and simply re-applies the aggregate filters once it
+  // resolves, so hidden/privileged exclusion still ends up correct without
+  // holding up everything else.
   loadPrivilegedNames().then(function(){
     loadMonths();
     renderCasePeriodControls();
     renderCasePlatformFilterRow();
     fetchCasesForPeriod();
     setupCSVDrop();
+  });
+  loadTeamRoleContext().then(function(){
+    applyAnalystFilter();
+    applyCaseFilter();
   });
 }
 
@@ -882,7 +996,7 @@ function fetchCasesForPeriod() {
 
 function filterCasesForCurrentScope(cases) {
   if (!state.user.isSupervisor&&state.user.displayName) return cases.filter(function(c){return c.analyst===state.user.displayName;});
-  if (state.selectedAnalyst==="all") return cases.filter(function(c){return !state.privilegedNames[c.analyst];});
+  if (state.selectedAnalyst==="all") return cases.filter(function(c){var k=normName(c.analyst);return !state.privilegedNames[k] && !state.hiddenAssignmentNames[k] && passesDashboardTeamRoleFilter(c.analyst);});
   return cases.filter(function(c){return c.analyst===state.selectedAnalyst;});
 }
 
@@ -977,7 +1091,7 @@ function updateCaseSourceFilterOptions(){
 // identical scoping without duplicating the branching logic.
 function scopeEntriesForCurrentUser(entries){
   if (!state.user.isSupervisor && state.user.displayName) return entries.filter(function(e){return e.analyst===state.user.displayName;});
-  if (state.selectedAnalyst==="all") return entries.filter(function(e){return !state.privilegedNames[e.analyst];});
+  if (state.selectedAnalyst==="all") return entries.filter(function(e){var k=normName(e.analyst);return !state.privilegedNames[k] && !state.hiddenAssignmentNames[k] && passesDashboardTeamRoleFilter(e.analyst);});
   return entries.filter(function(e){return e.analyst===state.selectedAnalyst;});
 }
 
@@ -1036,6 +1150,7 @@ function renderCaseStats() {
 
 function renderCaseChart() {
   var canvas=document.getElementById("caseChart"); if(!canvas)return;
+  var emptyEl=document.getElementById("caseChartEmpty");
   var counts={Kount:0,Zendesk:0,RADAR:0};
   state.cases.forEach(function(c){if(counts[c.platform]!==undefined)counts[c.platform]++;});
   var labels=Object.keys(counts), values=labels.map(function(k){return counts[k];});
@@ -1046,7 +1161,21 @@ function renderCaseChart() {
   // actual rendered height via ResizeObserver and sizes the canvas to fill
   // it, so a fixed pixel height here would just fight the flex layout.
   if (state.caseChart){state.caseChart.destroy();state.caseChart=null;}
-  if (values.every(function(v){return v===0;})){canvas.parentElement.innerHTML='<p class="empty">No cases for this period</p>';return;}
+  if (values.every(function(v){return v===0;})){
+    // IMPORTANT: hide the canvas rather than replacing its parent's
+    // innerHTML. Overwriting innerHTML here used to remove the <canvas>
+    // node from the DOM entirely — every subsequent renderCaseChart() call
+    // then found nothing at getElementById("caseChart") and bailed out via
+    // the `if(!canvas)return;` guard above, so the chart could get
+    // permanently stuck showing "No cases" even after real data loaded.
+    // Toggling visibility keeps the canvas in the DOM so it's always
+    // findable on the next render.
+    canvas.style.display="none";
+    if (emptyEl) emptyEl.style.display="block";
+    return;
+  }
+  canvas.style.display="block";
+  if (emptyEl) emptyEl.style.display="none";
   state.caseChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:["hsl(220,80%,55%)","hsl(160,55%,40%)","hsl(45,90%,45%)"],borderRadius:6}]},options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0,color:state.isDark?"#ccc":"#555"}},x:{ticks:{color:state.isDark?"#ccc":"#555"},grid:{display:false}}},responsive:true,maintainAspectRatio:false}});
 }
 
@@ -1149,9 +1278,19 @@ function renderChart(){
   var labels=s.map(function(x){return x[0];}), values=s.map(function(x){return +(x[1]/3600).toFixed(3);});
   var colors=["hsl(355,75%,60%)","hsl(340,70%,58%)","hsl(325,68%,56%)","hsl(310,65%,54%)","hsl(295,62%,52%)"];
   var canvas=document.getElementById("taskChart");
-  canvas.style.height=Math.max(250,labels.length*48)+"px";
+  var emptyEl=document.getElementById("taskChartEmpty");
   if(state.taskChart){state.taskChart.destroy();state.taskChart=null;}
-  if(!labels.length){canvas.parentElement.innerHTML='<p class="empty">No data for this period</p>';return;}
+  if(!labels.length){
+    // Same fix as renderCaseChart: hide the canvas instead of replacing its
+    // parent's innerHTML, which used to permanently remove the <canvas>
+    // node and break every future render for this chart.
+    canvas.style.display="none";
+    if (emptyEl) emptyEl.style.display="block";
+    return;
+  }
+  canvas.style.display="block";
+  if (emptyEl) emptyEl.style.display="none";
+  canvas.style.height=Math.max(250,labels.length*48)+"px";
   state.taskChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:labels.map(function(_,i){return colors[i%colors.length];}),borderRadius:6}]},options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return " "+fmtDurationShort(Math.round(ctx.raw*3600));}}}},scales:{x:{title:{display:true,text:"Hours"},ticks:{color:state.isDark?"#ccc":"#555"}},y:{grid:{display:false},ticks:{color:state.isDark?"#ccc":"#555",font:{size:11}}}},responsive:true,maintainAspectRatio:false}});
 }
 
@@ -1336,7 +1475,8 @@ var NON_PRODUCTIVE=["Break","Equipment Issue","Catching Up","Inclusion Calendar 
 function calcUtilization(entries){if(!entries.length)return 0;var total=sum(entries,"duration"),prod=entries.filter(function(e){return!NON_PRODUCTIVE.some(function(s){return e.task.toLowerCase().includes(s.toLowerCase());});});return total?Math.round(sum(prod,"duration")/total*100):0;}
 
 function renderSupervisorFilters(assignments){
-  var supers={};assignments.forEach(function(a){supers[a.supervisor_email]=a.team_name||a.supervisor_email;});
+  var visible=(assignments||[]).filter(function(a){ return !isHiddenAssignment(a); });
+  var supers={};visible.forEach(function(a){supers[a.supervisor_email]=a.team_name||a.supervisor_email;});
   var html='<button class="tab-btn '+(state.selectedSupervisor===null?"active":"")+'" onclick="setSupervisorFilter(null)">All Teams</button>';
   Object.entries(supers).forEach(function(kv){html+='<button class="tab-btn '+(state.selectedSupervisor===kv[0]?"active":"")+'" onclick="setSupervisorFilter(\''+esc(kv[0])+'\')">'+esc(kv[1])+'</button>';});
   document.getElementById("supervisorFilters").innerHTML=html;
@@ -1361,7 +1501,8 @@ function getEffectiveRole(a){ return (a.role && a.role.trim()) ? a.role.trim() :
 function renderRoleFilters(assignments){
   var el = document.getElementById("roleFilters");
   if (!el) return;
-  var roles = [...new Set((assignments||[]).map(getEffectiveRole))].sort();
+  var visible = (assignments||[]).filter(function(a){ return !isHiddenAssignment(a); });
+  var roles = [...new Set(visible.map(getEffectiveRole))].sort();
   if (roles.length <= 1) { el.innerHTML = ""; return; }
   var html = '<button class="tab-btn '+(state.selectedRole===null?"active":"")+'" onclick="setRoleFilter(null)">All Roles</button>';
   roles.forEach(function(r){ html += '<button class="tab-btn '+(state.selectedRole===r?"active":"")+'" onclick="setRoleFilter(\''+esc(r)+'\')">'+esc(r)+'</button>'; });
@@ -1516,6 +1657,7 @@ function renderTeamContent(data){
   // admins out of those aggregate numbers.
   var visibleAssignments=(data.assignments||[]).filter(function(a){
     if(!state.user.isSupervisor)return a.analyst_name===state.user.displayName;
+    if(isHiddenAssignment(a))return false;
     if(state.selectedSupervisor&&a.supervisor_email!==state.selectedSupervisor)return false;
     if(state.selectedRole&&getEffectiveRole(a)!==state.selectedRole)return false;
     return true;
@@ -1528,7 +1670,7 @@ function renderTeamContent(data){
   // Needs Attention (and its Archived companion) are admin-view only —
   // supervisors (non-admin) no longer see either section in Team Directory.
   if (isAdminUser()) {
-    var attentionAssignments = visibleAssignments.filter(function(a){ return !state.privilegedNames[a.analyst_name]; });
+    var attentionAssignments = visibleAssignments.filter(function(a){ return !state.privilegedNames[normName(a.analyst_name)]; });
     renderAttentionBanner(attentionAssignments, data.entries, data.cases);
     renderArchivedBanner();
   } else {
