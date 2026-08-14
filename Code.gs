@@ -131,6 +131,9 @@ function doGet(e) {
       if (action === "getTeamData") {
         return jsonResponse(getTeamData(params.start, params.end));
       }
+      if (action === "getAssignments") {
+        return jsonResponse(getAssignmentsList());
+      }
       if (action === "getAllUsers") {
         return jsonResponse(getAllUsers(params.email));
       }
@@ -329,6 +332,26 @@ function getTeamData(startDate, endDate) {
       return { assignments: assignments, entries: entries, cases: cases };
     });
   } catch(e) { return { error: e.toString() }; }
+}
+
+// Lightweight, date-range-independent version of the assignments half of
+// getTeamData() — just team_assignments rows, no entries/cases join. Used
+// by the Dashboard (not just Team Directory) to populate its Team/Role
+// filter dropdowns without waiting on a full getTeamData() call tied to
+// whatever date range happens to be selected. Same shape as getTeamData()'s
+// assignments array so both callers can share client-side logic.
+function getAssignmentsList() {
+  try {
+    return cachedCall("assignments_list", 300, function() {
+      var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var taSheet = ss.getSheetByName(SHEET_TEAM_ASSIGN);
+      if (!taSheet || taSheet.getLastRow() < 2) return [];
+      var assignData = taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 4).getValues();
+      return assignData
+        .filter(function(r){ return r[0] && !isHiddenRosterName(r[0]); })
+        .map(function(r){ return { analyst_name: r[0].toString(), supervisor_email: r[1].toString(), team_name: r[2].toString(), role: r[3].toString() }; });
+    });
+  } catch(e) { return []; }
 }
 
 // ============================================================
