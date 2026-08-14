@@ -336,6 +336,7 @@ textarea{resize:vertical;min-height:80px;}
         <label>Date Range:</label><input type="date" id="teamStartDate" class="date-input"/><span style="color:var(--text-muted)">to</span><input type="date" id="teamEndDate" class="date-input"/><button class="btn btn-primary btn-sm" onclick="loadTeamData()">Apply</button>
       </div>
       <div id="supervisorFilters" class="tabs" style="margin-bottom:1rem"></div>
+      <div id="roleFilters" class="tabs" style="margin-bottom:1rem"></div>
       <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">
         <label style="font-size:.82rem;font-weight:600;color:var(--text-muted)">Sort by:</label>
         <select id="teamSortSelect" class="form-select" style="width:auto">
@@ -526,7 +527,7 @@ var state = {
   selectedMonth:"", selectedAnalyst:"all", sortField:"date", sortDir:"desc",
   caseSortField:"date", caseSortDir:"desc", editEntry:null,
   casePlatformFilter:"all", caseSourceFilter:"all", casePeriodMode:"week", casePeriodStart:null, casePeriodEnd:null,
-  teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null, teamSortMode:"name",
+  teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null, selectedRole:null, teamSortMode:"name",
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
   timeLogCustomRange:{ active:false, start:null, end:null, entries:[] },
@@ -1327,7 +1328,7 @@ function loadTeamData(){
     var tasks=[...new Set(data.entries.map(function(e){return e.task;}))].sort();
     var ae=document.getElementById("exportAnalyst");ae.innerHTML='<option value="all">All Analysts</option>';analysts.forEach(function(a){ae.innerHTML+='<option value="'+esc(a)+'">'+esc(a)+'</option>';});
     var ac=document.getElementById("exportActivity");ac.innerHTML='<option value="all">All Activities</option>';tasks.forEach(function(t){ac.innerHTML+='<option value="'+esc(t)+'">'+esc(t)+'</option>';});
-    renderSupervisorFilters(data.assignments);renderTeamContent(data);
+    renderSupervisorFilters(data.assignments);renderRoleFilters(data.assignments);renderTeamContent(data);
   }).catch(function(err){toast("error","Failed: "+err);});
 }
 
@@ -1342,6 +1343,32 @@ function renderSupervisorFilters(assignments){
 }
 
 function setSupervisorFilter(email){state.selectedSupervisor=email;renderSupervisorFilters(state.teamData.assignments||[]);renderTeamContent(state.teamData);}
+
+// ============================================================
+// ROLE SUB-FILTER — lets a supervisor narrow Team Directory down to just
+// Analysts, just Senior Analysts, etc. Options are built dynamically from
+// whatever role values actually show up in team_assignments (Code.gs's
+// getTeamData -> assignments[].role), the same field already rendered as
+// the "PI Analyst" text under each analyst's name on their card — rather
+// than hardcoding "Analyst"/"Senior Analyst", so this keeps working if the
+// sheet ever has other role labels in it. Blank roles fall back to the
+// same "PI Analyst" default the card display already uses, so the filter
+// options line up exactly with what's shown on screen. Hidden entirely
+// when everyone shares one role (nothing meaningful to filter).
+// ============================================================
+function getEffectiveRole(a){ return (a.role && a.role.trim()) ? a.role.trim() : "PI Analyst"; }
+
+function renderRoleFilters(assignments){
+  var el = document.getElementById("roleFilters");
+  if (!el) return;
+  var roles = [...new Set((assignments||[]).map(getEffectiveRole))].sort();
+  if (roles.length <= 1) { el.innerHTML = ""; return; }
+  var html = '<button class="tab-btn '+(state.selectedRole===null?"active":"")+'" onclick="setRoleFilter(null)">All Roles</button>';
+  roles.forEach(function(r){ html += '<button class="tab-btn '+(state.selectedRole===r?"active":"")+'" onclick="setRoleFilter(\''+esc(r)+'\')">'+esc(r)+'</button>'; });
+  el.innerHTML = html;
+}
+
+function setRoleFilter(role){ state.selectedRole=role; renderRoleFilters(state.teamData.assignments||[]); renderTeamContent(state.teamData); }
 
 // Auto-surfaces analysts worth a second look: logged case-queue time on a
 // day but recorded zero cases that day, or an AHT well above the team
@@ -1489,7 +1516,9 @@ function renderTeamContent(data){
   // admins out of those aggregate numbers.
   var visibleAssignments=(data.assignments||[]).filter(function(a){
     if(!state.user.isSupervisor)return a.analyst_name===state.user.displayName;
-    return!state.selectedSupervisor||a.supervisor_email===state.selectedSupervisor;
+    if(state.selectedSupervisor&&a.supervisor_email!==state.selectedSupervisor)return false;
+    if(state.selectedRole&&getEffectiveRole(a)!==state.selectedRole)return false;
+    return true;
   });
   // The Needs Attention banner is a different concern from visibility —
   // it's a performance-flagging baseline, and an admin's meeting-heavy
