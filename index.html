@@ -19,6 +19,35 @@
   --shadow-med:0 8px 24px -4px hsl(355,75%,60%,0.2);
 }
 .dark{--bg:hsl(0,0%,10%);--card:hsl(0,0%,14%);--border:hsl(0,0%,20%);--text:hsl(0,0%,95%);--text-muted:hsl(0,0%,60%);--muted-bg:hsl(0,0%,18%);}
+/* THEME PALETTES — color-only overrides (primary/accent/gradients). Applied
+   as a class on <body> alongside (not instead of) .dark, so light/dark and
+   color palette are independent choices — .dark controls bg/card/border/
+   text, these control brand color only. .theme-fetch mirrors the :root
+   defaults above so nothing changes visually if it's the active/default
+   theme; it exists mainly so "fetch" is a real, selectable option in the
+   picker rather than an implicit fallback. */
+.theme-fetch{--primary:hsl(355,75%,60%);--accent:hsl(330,65%,55%);--gradient:linear-gradient(135deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--gradient-btn:linear-gradient(90deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--shadow-soft:0 4px 16px -2px hsl(355,75%,60%,0.15);--shadow-med:0 8px 24px -4px hsl(355,75%,60%,0.2);}
+.theme-ocean{--primary:hsl(205,80%,55%);--accent:hsl(190,70%,50%);--gradient:linear-gradient(135deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);--gradient-btn:linear-gradient(90deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);--shadow-soft:0 4px 16px -2px hsl(205,80%,55%,0.15);--shadow-med:0 8px 24px -4px hsl(205,80%,55%,0.2);}
+.theme-forest{--primary:hsl(150,55%,38%);--accent:hsl(90,45%,45%);--gradient:linear-gradient(135deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);--gradient-btn:linear-gradient(90deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);--shadow-soft:0 4px 16px -2px hsl(150,55%,38%,0.15);--shadow-med:0 8px 24px -4px hsl(150,55%,38%,0.2);}
+.theme-sunset{--primary:hsl(28,90%,55%);--accent:hsl(350,80%,60%);--gradient:linear-gradient(135deg,hsl(38,95%,55%) 0%,hsl(350,80%,60%) 100%);--gradient-btn:linear-gradient(90deg,hsl(38,95%,55%) 0%,hsl(350,80%,60%) 100%);--shadow-soft:0 4px 16px -2px hsl(28,90%,55%,0.15);--shadow-med:0 8px 24px -4px hsl(28,90%,55%,0.2);}
+.theme-grape{--primary:hsl(265,60%,58%);--accent:hsl(300,55%,55%);--gradient:linear-gradient(135deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);--gradient-btn:linear-gradient(90deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);--shadow-soft:0 4px 16px -2px hsl(265,60%,58%,0.15);--shadow-med:0 8px 24px -4px hsl(265,60%,58%,0.2);}
+.theme-slate{--primary:hsl(210,20%,45%);--accent:hsl(210,15%,35%);--gradient:linear-gradient(135deg,hsl(215,25%,42%) 0%,hsl(210,15%,32%) 100%);--gradient-btn:linear-gradient(90deg,hsl(215,25%,42%) 0%,hsl(210,15%,32%) 100%);--shadow-soft:0 4px 16px -2px hsl(210,20%,45%,0.15);--shadow-med:0 8px 24px -4px hsl(210,20%,45%,0.2);}
+/* THEME PICKER — modal swatch grid. Preview backgrounds are literal
+   (duplicated) gradient values rather than referencing the CSS vars above,
+   since a swatch needs to preview a theme regardless of which theme is
+   currently active on <body>. */
+.theme-swatch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:.85rem;}
+.theme-swatch{cursor:pointer;border:2px solid var(--border);border-radius:.65rem;padding:.6rem;text-align:center;transition:border-color .15s,transform .15s;background:var(--card);}
+.theme-swatch:hover{transform:translateY(-2px);}
+.theme-swatch.active{border-color:var(--primary);}
+.theme-swatch-preview{height:44px;border-radius:.45rem;margin-bottom:.5rem;}
+.theme-swatch-name{font-size:.8rem;font-weight:600;display:flex;align-items:center;justify-content:center;gap:.3rem;}
+.theme-swatch-preview-fetch{background:linear-gradient(135deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);}
+.theme-swatch-preview-ocean{background:linear-gradient(135deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);}
+.theme-swatch-preview-forest{background:linear-gradient(135deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);}
+.theme-swatch-preview-sunset{background:linear-gradient(135deg,hsl(38,95%,55%) 0%,hsl(350,80%,60%) 100%);}
+.theme-swatch-preview-grape{background:linear-gradient(135deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);}
+.theme-swatch-preview-slate{background:linear-gradient(135deg,hsl(215,25%,42%) 0%,hsl(210,15%,32%) 100%);}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);transition:background .3s,color .3s;font-size:15px;line-height:1.5;}
 .container{max-width:1280px;margin:0 auto;padding:2rem 1.5rem;}
 
@@ -215,6 +244,7 @@ textarea{resize:vertical;min-height:80px;}
         <div><h1>PI Productivity Suite</h1></div>
         <div class="header-actions">
           <button id="themeToggle" class="btn btn-ghost" title="Toggle theme">🌙</button>
+          <button id="themePaletteBtn" class="btn btn-ghost" title="Choose theme">🎨</button>
           <button id="teamDirBtn" class="btn btn-ghost" style="display:none">👥 Team Directory</button>
           <button id="userMgmtBtn" class="btn btn-ghost" style="display:none">⚙️ Users</button>
           <button id="signOutBtn" class="btn btn-ghost">👤 Sign Out</button>
@@ -447,6 +477,17 @@ textarea{resize:vertical;min-height:80px;}
   </div>
 </div>
 
+<!-- THEME MODAL -->
+<div class="modal-backdrop" id="themeModal">
+  <div class="modal">
+    <div class="modal-header"><button class="modal-close" onclick="closeThemeModal()">×</button><h2>🎨 Choose a Theme</h2><p>Pick a color palette. Light/dark stays independent — use the sun/moon toggle for that.</p></div>
+    <div class="modal-body">
+      <div class="theme-swatch-grid" id="themeSwatchGrid"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeThemeModal()">Close</button></div>
+  </div>
+</div>
+
 <script>
 // ============================================================
 // CONFIG — update EXEC_URL if you redeploy Apps Script
@@ -544,7 +585,7 @@ var state = {
   timeLogCustomRange:{ active:false, start:null, end:null, entries:[] },
   overviewActivityFilter:"all", privilegedNames:{},
   reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null, archivedFlags:[],
-  taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, usersList:[]
+  taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, themeId:"fetch", usersList:[]
 };
 
 // ============================================================
@@ -1976,7 +2017,59 @@ function showView(view){
 }
 function toggleCollapsible(id){var c=document.getElementById(id+"Content"),t=c?c.previousElementSibling:null;if(!c)return;c.classList.toggle("open");if(t)t.classList.toggle("open");}
 
-function setupTheme(){var s=localStorage?localStorage.getItem("theme"):null;if(s==="dark")applyTheme(true);document.getElementById("themeToggle").addEventListener("click",function(){applyTheme(!state.isDark);});}
+// ============================================================
+// THEME PALETTES — color-only presets, independent of the dark/light
+// toggle above (a palette class on <body> sets --primary/--accent/
+// --gradient/--gradient-btn; .dark separately sets --bg/--card/--border/
+// --text, so any palette works in either light or dark mode). Persisted
+// under its own localStorage key so it survives reloads the same way the
+// light/dark preference does.
+// ============================================================
+var THEME_PRESETS = [
+  { id:"fetch",  name:"Fetch (Default)" },
+  { id:"ocean",  name:"Ocean" },
+  { id:"forest", name:"Forest" },
+  { id:"sunset", name:"Sunset" },
+  { id:"grape",  name:"Grape" },
+  { id:"slate",  name:"Slate" }
+];
+var THEME_PALETTE_KEY = "fps_theme_palette";
+
+function applyThemePalette(id){
+  if (!THEME_PRESETS.some(function(t){ return t.id===id; })) id = "fetch";
+  state.themeId = id;
+  THEME_PRESETS.forEach(function(t){ document.body.classList.remove("theme-"+t.id); });
+  document.body.classList.add("theme-"+id);
+  if (localStorage) localStorage.setItem(THEME_PALETTE_KEY, id);
+  renderThemeSwatches();
+  // Chart.js reads tick/label colors off state.isDark at render time, not
+  // the palette — but the bars/lines themselves are drawn from fixed hues
+  // (Chart.js doesn't read CSS vars), so switching palette alone doesn't
+  // need a chart re-render the way the dark/light toggle does.
+}
+
+function renderThemeSwatches(){
+  var el = document.getElementById("themeSwatchGrid");
+  if (!el) return;
+  el.innerHTML = THEME_PRESETS.map(function(t){
+    return '<div class="theme-swatch'+(state.themeId===t.id?' active':'')+'" onclick="selectTheme(\''+t.id+'\')">'
+      + '<div class="theme-swatch-preview theme-swatch-preview-'+t.id+'"></div>'
+      + '<div class="theme-swatch-name">'+(state.themeId===t.id?'✓ ':'')+esc(t.name)+'</div>'
+      + '</div>';
+  }).join("");
+}
+
+function selectTheme(id){ applyThemePalette(id); }
+function openThemeModal(){ renderThemeSwatches(); document.getElementById("themeModal").classList.add("open"); }
+function closeThemeModal(){ document.getElementById("themeModal").classList.remove("open"); }
+
+function setupTheme(){
+  var s=localStorage?localStorage.getItem("theme"):null;if(s==="dark")applyTheme(true);
+  var savedPalette = localStorage?localStorage.getItem(THEME_PALETTE_KEY):null;
+  applyThemePalette(savedPalette||"fetch");
+  document.getElementById("themeToggle").addEventListener("click",function(){applyTheme(!state.isDark);});
+  document.getElementById("themePaletteBtn").addEventListener("click", openThemeModal);
+}
 function applyTheme(dark){state.isDark=dark;document.body.classList.toggle("dark",dark);document.getElementById("themeToggle").textContent=dark?"☀️":"🌙";if(localStorage)localStorage.setItem("theme",dark?"dark":"light");if(state.taskChart)renderChart();if(state.caseChart)renderCaseChart();if(state.trendsLoaded)renderTrendsChart();}
 
 function setDefaultDateRanges(){var t=new Date(),s=new Date(t.getTime()-42*86400000);document.getElementById("teamStartDate").value=formatDate(s);document.getElementById("teamEndDate").value=formatDate(t);}
