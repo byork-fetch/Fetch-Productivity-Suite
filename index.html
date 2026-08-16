@@ -1322,7 +1322,7 @@ function renderChart(){
   var t={};entries.forEach(function(e){t[e.task]=(t[e.task]||0)+e.duration;});
   var s=Object.entries(t).sort(function(a,b){return b[1]-a[1];});
   var labels=s.map(function(x){return x[0];}), values=s.map(function(x){return +(x[1]/3600).toFixed(3);});
-  var colors=["hsl(355,75%,60%)","hsl(340,70%,58%)","hsl(325,68%,56%)","hsl(310,65%,54%)","hsl(295,62%,52%)"];
+  var colors=THEME_CHART_COLORS[state.themeId]||THEME_CHART_COLORS.fetch;
   var canvas=document.getElementById("taskChart");
   var emptyEl=document.getElementById("taskChartEmpty");
   if(state.taskChart){state.taskChart.destroy();state.taskChart=null;}
@@ -2033,6 +2033,19 @@ var THEME_PRESETS = [
   { id:"grape",  name:"Grape" },
   { id:"slate",  name:"Slate" }
 ];
+// Five-step bar-color ramps for each palette, used by the "Time by Task"
+// chart (renderChart()). Chart.js draws bars from literal color values —
+// it doesn't read CSS custom properties — so this can't just point at
+// var(--primary)/var(--accent); it needs its own set of concrete hues per
+// theme, hand-picked to sit near that theme's --primary/--accent hues.
+var THEME_CHART_COLORS = {
+  fetch:  ["hsl(355,75%,60%)","hsl(340,70%,58%)","hsl(325,68%,56%)","hsl(310,65%,54%)","hsl(295,62%,52%)"],
+  ocean:  ["hsl(205,80%,55%)","hsl(200,75%,52%)","hsl(195,72%,50%)","hsl(190,70%,50%)","hsl(185,68%,48%)"],
+  forest: ["hsl(150,55%,38%)","hsl(135,50%,40%)","hsl(120,48%,42%)","hsl(105,46%,44%)","hsl(90,45%,45%)"],
+  sunset: ["hsl(28,90%,55%)","hsl(15,88%,57%)","hsl(2,85%,58%)","hsl(349,82%,59%)","hsl(350,80%,60%)"],
+  grape:  ["hsl(265,60%,58%)","hsl(275,58%,57%)","hsl(285,56%,56%)","hsl(295,55%,55%)","hsl(300,55%,55%)"],
+  slate:  ["hsl(210,20%,45%)","hsl(212,19%,42%)","hsl(213,18%,39%)","hsl(211,16%,36%)","hsl(210,15%,35%)"]
+};
 var THEME_PALETTE_KEY = "fps_theme_palette";
 
 function applyThemePalette(id){
@@ -2042,10 +2055,12 @@ function applyThemePalette(id){
   document.body.classList.add("theme-"+id);
   if (localStorage) localStorage.setItem(THEME_PALETTE_KEY, id);
   renderThemeSwatches();
-  // Chart.js reads tick/label colors off state.isDark at render time, not
-  // the palette — but the bars/lines themselves are drawn from fixed hues
-  // (Chart.js doesn't read CSS vars), so switching palette alone doesn't
-  // need a chart re-render the way the dark/light toggle does.
+  // Time by Task's bars are colored from THEME_CHART_COLORS[state.themeId]
+  // (Chart.js draws literal colors, it can't read CSS vars), so switching
+  // palette needs to re-render that chart immediately — unlike the case
+  // chart / platform badges, which use fixed colors on purpose and don't
+  // need this.
+  if (state.taskChart) renderChart();
 }
 
 function renderThemeSwatches(){
