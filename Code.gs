@@ -20,18 +20,6 @@ var EXTENSION_SECRET   = "fetch-fraud-squad";
 // data fetch requests. Keep this in sync with DASHBOARD_SECRET in index.html.
 var DASHBOARD_SECRET   = "fps-dashboard-2024";
 
-var HIDDEN_ROSTER_NAMES = [
-  "cassandra buss",
-  "alex mendez", "daniel jullian", "daniela lópez", "daniela lopez",
-  "daniela suarez", "eddie escamilla", "enrique becerril", "pamela minero",
-  "ricardo rico", "tori segura", "mauricio gavito paredes",
-  "michael bracamontes", "diego garcía", "diego garcia"
-];
-
-function isHiddenRosterName(name) {
-  return HIDDEN_ROSTER_NAMES.indexOf(String(name || "").trim().toLowerCase()) !== -1;
-}
-
 function isPrivileged(role) {
   var r = (role || "").toLowerCase().trim();
   return r === "admin" || r === "supervisor";
@@ -321,14 +309,14 @@ function getTeamData(startDate, endDate) {
       if (!taSheet || taSheet.getLastRow() < 2) return { assignments: [], entries: [], cases: [] };
       var assignData  = taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 4).getValues();
       var assignments = assignData
-        .filter(function(r){ return r[0] && !isHiddenRosterName(r[0]); })
+        .filter(function(r){ return r[0]; })
         .map(function(r){ return { analyst_name: r[0].toString(), supervisor_email: r[1].toString(), team_name: r[2].toString(), role: r[3].toString() }; });
       var visibleAnalysts = {};
       assignments.forEach(function(a){ visibleAnalysts[a.analyst_name] = true; });
       var entries = getTimeEntries(startDate, endDate);
       if (entries.error) return { error: entries.error };
-      entries = entries.filter(function(e){ return !isHiddenRosterName(e.analyst) && !!visibleAnalysts[e.analyst]; });
-      var cases = _readAllCases(startDate, endDate).filter(function(c){ return !isHiddenRosterName(c.analyst) && !!visibleAnalysts[c.analyst]; });
+      entries = entries.filter(function(e){ return !!visibleAnalysts[e.analyst]; });
+      var cases = _readAllCases(startDate, endDate).filter(function(c){ return !!visibleAnalysts[c.analyst]; });
       return { assignments: assignments, entries: entries, cases: cases };
     });
   } catch(e) { return { error: e.toString() }; }
@@ -348,7 +336,7 @@ function getAssignmentsList() {
       if (!taSheet || taSheet.getLastRow() < 2) return [];
       var assignData = taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 4).getValues();
       return assignData
-        .filter(function(r){ return r[0] && !isHiddenRosterName(r[0]); })
+        .filter(function(r){ return r[0]; })
         .map(function(r){ return { analyst_name: r[0].toString(), supervisor_email: r[1].toString(), team_name: r[2].toString(), role: r[3].toString() }; });
     });
   } catch(e) { return []; }
@@ -379,7 +367,7 @@ function _readAllCases(startDate, endDate) {
 
 function getCaseEntries(startDate, endDate) {
   try {
-    return _readAllCases(startDate, endDate).filter(function(c){ return !isHiddenRosterName(c.analyst); });
+    return _readAllCases(startDate, endDate);
   } catch(e) { return { error: e.toString() }; }
 }
 
@@ -393,7 +381,7 @@ function getAllUsers(callerEmail) {
     var sheet = ss.getSheetByName(SHEET_USERS);
     if (!sheet || sheet.getLastRow() < 2) return [];
     return sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues()
-      .filter(function(r){ return r[0] && !isHiddenRosterName(r[2]); })
+      .filter(function(r){ return r[0]; })
       .map(function(r){ return { email: r[0].toString(), role: r[1].toString(), display_name: r[2].toString() }; });
   } catch(e) { return { error: e.toString() }; }
 }
@@ -698,9 +686,10 @@ function _digestComputeOpenAttentionFlagCount() {
     var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     var taSheet = ss.getSheetByName(SHEET_TEAM_ASSIGN);
     if (!taSheet || taSheet.getLastRow() < 2) return 0;
+    var privileged = _digestGetPrivilegedNames();
     var validNames = {};
     taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 1).getValues().forEach(function(r){
-      if (r[0] && !isHiddenRosterName(r[0])) validNames[r[0].toString()] = true;
+      if (r[0] && !privileged[_digestNormName(r[0])]) validNames[r[0].toString()] = true;
     });
 
     var end = new Date(), start = new Date(end.getTime() - 42*86400000);
@@ -777,7 +766,7 @@ function getCaseTrends(weeksBack, analystFilter) {
         weeks.push({ start: _digestFormatDate(ws), end: _digestFormatDate(we) });
       }
       var overallStart = weeks[0].start, overallEnd = weeks[weeks.length-1].end;
-      var cases = _readAllCases(overallStart, overallEnd).filter(function(c){ return !isHiddenRosterName(c.analyst); });
+      var cases = _readAllCases(overallStart, overallEnd);
 
       if (analystFilter !== "all") {
         cases = cases.filter(function(c){ return c.analyst === analystFilter; });
@@ -816,12 +805,37 @@ function _digestGetWeeklyStats(weeksBack) {
     var we = new Date(ws.getTime() + 6*86400000);
     if (we > now) we = now; // cap the current week's end at "now" rather than querying into the future
     var wsStr = _digestFormatDate(ws), weStr = _digestFormatDate(we);
-    var cases = _readAllCases(wsStr, weStr).filter(function(c){ return !isHiddenRosterName(c.analyst); });
+    var cases = _readAllCases(wsStr, weStr);
     var ahtSecs = cases.filter(function(c){ return typeof c.handle_seconds==="number" && c.handle_seconds>0; }).map(function(c){ return c.handle_seconds; });
     var avgAhtMin = ahtSecs.length ? Math.round(ahtSecs.reduce(function(a,b){return a+b;},0)/ahtSecs.length/60*10)/10 : null;
     weeks.push({ start: wsStr, end: weStr, count: cases.length, avgAhtMin: avgAhtMin });
   }
   return weeks;
+}
+
+// Normalizes a name for matching, same convention used throughout for
+// as normName() in index.html — trims + lowercases so a stray space or a
+// capitalization mismatch between users.display_name and Cases.analyst
+// doesn't silently break the exclusion.
+function _digestNormName(s) { return String(s||"").trim().toLowerCase(); }
+
+// Mirrors the dashboard's computePrivilegedNames()/privilegedNames exclusion:
+// admins and supervisors (Bronte included) are always fully visible if
+// looked up by name directly, but never counted in team-wide aggregates —
+// case totals, AHT, top analysts, idle time. The digest previously only
+// excluded hidden-roster rows, so privileged accounts were silently still
+// being counted here even though every other aggregate view excludes them.
+function _digestGetPrivilegedNames() {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName(SHEET_USERS);
+    if (!sheet || sheet.getLastRow() < 2) return {};
+    var set = {};
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues().forEach(function(r){
+      if (isPrivileged(r[1])) set[_digestNormName(r[2])] = true;
+    });
+    return set;
+  } catch(e) { return {}; }
 }
 
 // Server-side port of index.html's parseEntryTimeMs/computeIdleGaps — those
@@ -881,11 +895,11 @@ function _digestSummarizeIdleGaps(entries) {
 // arrows on the By Platform table. Prior week is the last complete Sun–Sat
 // week before the digest's (possibly partial) current week, so a Tuesday
 // send is compared against a fair full week rather than another partial one.
-function _digestComputePlatformTrend(weekStart) {
+function _digestComputePlatformTrend(weekStart, privileged) {
   var priorEnd = new Date(weekStart.getTime() - 86400000);
   var priorStart = new Date(priorEnd.getTime() - 6*86400000);
   var priorCases = _readAllCases(_digestFormatDate(priorStart), _digestFormatDate(priorEnd))
-    .filter(function(c){ return !isHiddenRosterName(c.analyst); });
+    .filter(function(c){ return !privileged[_digestNormName(c.analyst)]; });
   var byPlatform = { Kount: [], Zendesk: [], RADAR: [] };
   priorCases.forEach(function(c){
     if (byPlatform[c.platform] && typeof c.handle_seconds === "number" && c.handle_seconds > 0) byPlatform[c.platform].push(c.handle_seconds);
@@ -916,7 +930,8 @@ function sendWeeklyDigest() {
     var weekStart = _digestGetWeekStart(now);
     var weekStartStr = _digestFormatDate(weekStart), todayStr = _digestFormatDate(now);
 
-    var cases = _readAllCases(weekStartStr, todayStr).filter(function(c){ return !isHiddenRosterName(c.analyst); });
+    var privileged = _digestGetPrivilegedNames();
+    var cases = _readAllCases(weekStartStr, todayStr).filter(function(c){ return !privileged[_digestNormName(c.analyst)]; });
     var byPlatform = { Kount:{count:0,ahtSecs:[]}, Zendesk:{count:0,ahtSecs:[]}, RADAR:{count:0,ahtSecs:[]} };
     var byAnalyst = {};
     cases.forEach(function(c){
@@ -938,7 +953,7 @@ function sendWeeklyDigest() {
     }
 
     // Prior-week AHT per platform, for the ▲/▼ context next to this week's number.
-    var priorAht = _digestComputePlatformTrend(weekStart);
+    var priorAht = _digestComputePlatformTrend(weekStart, privileged);
 
     var platformRows = ["Kount","Zendesk","RADAR"].map(function(p){
       var d = byPlatform[p];
@@ -992,7 +1007,7 @@ function sendWeeklyDigest() {
     // Idle Time — ported from the dashboard's client-side idle-gap logic so
     // the digest can flag it without anyone opening the dashboard first.
     var weekEntriesRaw = getTimeEntries(weekStartStr, todayStr);
-    var weekEntries = (Array.isArray(weekEntriesRaw) ? weekEntriesRaw : []).filter(function(e){ return !isHiddenRosterName(e.analyst); });
+    var weekEntries = (Array.isArray(weekEntriesRaw) ? weekEntriesRaw : []).filter(function(e){ return !privileged[_digestNormName(e.analyst)]; });
     var idleSummary = _digestSummarizeIdleGaps(weekEntries);
     var idleSection = "";
     if (idleSummary.gapCount > 0) {
