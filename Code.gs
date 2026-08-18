@@ -685,6 +685,7 @@ function _digestFormatDate(d) {
 // copy rather than shared, since the dashboard's version lives in client
 // JS and isn't reachable from Apps Script.
 var DIGEST_PLATFORM_TASK_MAP = { Kount: "Rules Review", Zendesk: "Dispute Review", RADAR: "RADAR" };
+var DIGEST_PLATFORM_COLORS = { Kount: "#2f6fed", Zendesk: "#159a6c", RADAR: "#d99e2b" };
 
 // Server-side port of index.html's computeAttentionFlags(), scoped to a
 // rolling 42-day window (same span Team Directory defaults to) and
@@ -823,6 +824,80 @@ function _digestGetWeeklyStats(weeksBack) {
   return weeks;
 }
 
+// Server-side port of index.html's parseEntryTimeMs/computeIdleGaps — those
+// only existed client-side before, so the digest previously had no way to
+// surface idle time at all. Same 10-minute threshold and same UTC-time
+// parsing convention as the dashboard (start_time/end_time are stored as
+// bare "HH:MM:SS" UTC strings unless they already contain a full ISO "T").
+var DIGEST_IDLE_GAP_THRESHOLD_SEC = 600;
+
+function _digestParseEntryTimeMs(date, utcTime) {
+  if (!utcTime) return null;
+  try {
+    var d = String(utcTime).indexOf("T") !== -1 ? new Date(utcTime) : new Date(date + "T" + utcTime + "Z");
+    var t = d.getTime();
+    return isNaN(t) ? null : t;
+  } catch(e) { return null; }
+}
+
+function _digestComputeIdleGaps(entries) {
+  var byKey = {};
+  entries.forEach(function(e){
+    var startMs = _digestParseEntryTimeMs(e.date, e.start_time), endMs = _digestParseEntryTimeMs(e.date, e.end_time);
+    if (startMs == null || endMs == null) return;
+    var key = e.analyst + "|" + e.date;
+    (byKey[key] = byKey[key] || []).push({ startMs: startMs, endMs: endMs, analyst: e.analyst, date: e.date });
+  });
+  var gaps = [];
+  Object.keys(byKey).forEach(function(key){
+    var list = byKey[key].sort(function(a,b){ return a.startMs - b.startMs; });
+    for (var i = 0; i < list.length - 1; i++) {
+      var gapSec = Math.round((list[i+1].startMs - list[i].endMs) / 1000);
+      if (gapSec > DIGEST_IDLE_GAP_THRESHOLD_SEC) {
+        gaps.push({ analyst: list[i].analyst, date: list[i].date, gapSec: gapSec });
+      }
+    }
+  });
+  return gaps;
+}
+
+// Total idle minutes + top 3 analysts by idle time this week, for the
+// digest's Idle Time section. entries should already be scoped to the
+// digest week and hidden-roster-filtered (sendWeeklyDigest does both before
+// calling this).
+function _digestSummarizeIdleGaps(entries) {
+  var gaps = _digestComputeIdleGaps(entries);
+  var totalSec = gaps.reduce(function(a,g){ return a + g.gapSec; }, 0);
+  var byAnalyst = {};
+  gaps.forEach(function(g){ byAnalyst[g.analyst] = (byAnalyst[g.analyst] || 0) + g.gapSec; });
+  var topOffenders = Object.keys(byAnalyst)
+    .map(function(name){ return { name: name, sec: byAnalyst[name] }; })
+    .sort(function(a,b){ return b.sec - a.sec; })
+    .slice(0, 3);
+  return { gapCount: gaps.length, totalSec: totalSec, topOffenders: topOffenders };
+}
+
+// This-week vs prior-full-week avg AHT per platform, for the "vs last week"
+// arrows on the By Platform table. Prior week is the last complete Sun–Sat
+// week before the digest's (possibly partial) current week, so a Tuesday
+// send is compared against a fair full week rather than another partial one.
+function _digestComputePlatformTrend(weekStart) {
+  var priorEnd = new Date(weekStart.getTime() - 86400000);
+  var priorStart = new Date(priorEnd.getTime() - 6*86400000);
+  var priorCases = _readAllCases(_digestFormatDate(priorStart), _digestFormatDate(priorEnd))
+    .filter(function(c){ return !isHiddenRosterName(c.analyst); });
+  var byPlatform = { Kount: [], Zendesk: [], RADAR: [] };
+  priorCases.forEach(function(c){
+    if (byPlatform[c.platform] && typeof c.handle_seconds === "number" && c.handle_seconds > 0) byPlatform[c.platform].push(c.handle_seconds);
+  });
+  var result = {};
+  ["Kount","Zendesk","RADAR"].forEach(function(p){
+    var arr = byPlatform[p];
+    result[p] = arr.length ? Math.round(arr.reduce(function(a,b){return a+b;},0)/arr.length) : null;
+  });
+  return result;
+}
+
 // The function the Saturday trigger actually calls. No callerEmail here —
 // it runs unattended, so recipient-list access bypasses the admin-only
 // gate getDigestRecipients() normally enforces (there's no "caller" to
@@ -855,50 +930,103 @@ function sendWeeklyDigest() {
       .sort(function(a,b){ return b.count-a.count; }).slice(0,3);
 
     function avgMin(secs) { if (!secs.length) return null; return Math.round(secs.reduce(function(a,b){return a+b;},0)/secs.length/60*10)/10; }
+    function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+    function fmtMinShort(sec) {
+      if (!sec) return "0m";
+      var h = Math.floor(sec/3600), m = Math.round((sec%3600)/60);
+      return h > 0 ? (h+"h "+m+"m") : (m+"m");
+    }
+
+    // Prior-week AHT per platform, for the ▲/▼ context next to this week's number.
+    var priorAht = _digestComputePlatformTrend(weekStart);
 
     var platformRows = ["Kount","Zendesk","RADAR"].map(function(p){
       var d = byPlatform[p];
-      return '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee">'+p+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+d.count+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+(avgMin(d.ahtSecs)!=null?avgMin(d.ahtSecs)+' min':'—')+'</td></tr>';
+      var curAvg = avgMin(d.ahtSecs);
+      var curSec = curAvg != null ? curAvg*60 : null;
+      var priorSec = priorAht[p];
+      var deltaHtml = "";
+      if (curSec != null && priorSec != null && priorSec > 0) {
+        var diff = curSec - priorSec;
+        if (Math.abs(diff) >= 5) { // ignore sub-5-second noise
+          var pct = Math.round(Math.abs(diff)/priorSec*100);
+          var faster = diff < 0; // lower AHT is better
+          deltaHtml = ' <span style="font-size:11px;font-weight:600;color:'+(faster?'#1e8a5a':'#c0392b')+'">'+(faster?'▼':'▲')+' '+pct+'%</span>';
+        }
+      }
+      var dotColor = DIGEST_PLATFORM_COLORS[p] || "#888";
+      return '<tr>'
+        + '<td style="padding:10px 12px;border-bottom:1px solid #eee"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+dotColor+';margin-right:8px"></span>'+p+'</td>'
+        + '<td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600">'+d.count+'</td>'
+        + '<td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right">'+(curAvg!=null?curAvg+' min':'—')+deltaHtml+'</td>'
+        + '</tr>';
     }).join("");
 
     var topRows = topAnalysts.length ? topAnalysts.map(function(a,i){
-      return '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee">'+(i+1)+'. '+a.name+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+a.count+' cases</td></tr>';
-    }).join("") : '<tr><td style="padding:6px 12px;color:#888" colspan="2">No cases logged this week</td></tr>';
+      var medal = i===0 ? "🥇" : i===1 ? "🥈" : "🥉";
+      return '<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">'+medal+' '+esc(a.name)+'</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600">'+a.count+' cases</td></tr>';
+    }).join("") : '<tr><td style="padding:8px 12px;color:#888" colspan="2">No cases logged this week</td></tr>';
 
     var attentionCount = _digestComputeOpenAttentionFlagCount();
     var attentionBanner = attentionCount > 0
-      ? '<p style="background:#fff3cd;color:#7a5b00;padding:10px 14px;border-radius:6px;font-weight:600;margin:0 0 20px">⚠️ '+attentionCount+' Needs Attention flag'+(attentionCount===1?'':'s')+' awaiting review on the dashboard</p>'
-      : '<p style="background:#e6f4ea;color:#1e6b34;padding:10px 14px;border-radius:6px;font-weight:600;margin:0 0 20px">✅ No open Needs Attention flags</p>';
+      ? '<div style="background:#fff8e6;border:1px solid #f5deb3;color:#7a5b00;padding:12px 16px;border-radius:10px;font-weight:600;font-size:13px;margin:0 0 20px">⚠️ '+attentionCount+' Needs Attention flag'+(attentionCount===1?'':'s')+' awaiting review on the dashboard</div>'
+      : '<div style="background:#eaf7ee;border:1px solid #bfe6c9;color:#1e6b34;padding:12px 16px;border-radius:10px;font-weight:600;font-size:13px;margin:0 0 20px">✅ No open Needs Attention flags</div>';
 
     var weeklyStats = _digestGetWeeklyStats(4);
     var trendRows = weeklyStats.map(function(w, idx){
       var deltaStr = "";
-      if (idx > 0) {
+      var isPartialCurrent = (idx === weeklyStats.length - 1) && (todayStr !== _digestFormatDate(new Date(weekStart.getTime()+6*86400000)));
+      if (idx > 0 && !isPartialCurrent) {
         var prev = weeklyStats[idx-1];
         var diff = w.count - prev.count;
         if (diff !== 0) {
           var arrow = diff > 0 ? "▲" : "▼";
           var pct = prev.count ? Math.round(Math.abs(diff)/prev.count*100) : null;
-          deltaStr = ' <span style="color:'+(diff>0?'#1e8a3a':'#c0392b')+';font-size:12px">'+arrow+(pct!=null?' '+pct+'%':'')+'</span>';
+          deltaStr = ' <span style="color:'+(diff>0?'#1e8a3a':'#c0392b')+';font-size:11px;font-weight:600">'+arrow+(pct!=null?' '+pct+'%':'')+'</span>';
         }
       }
-      return '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee">'+w.start+' – '+w.end+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+w.count+deltaStr+'</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">'+(w.avgAhtMin!=null?w.avgAhtMin+' min':'—')+'</td></tr>';
+      var label = w.start+' – '+w.end + (isPartialCurrent ? ' <span style="color:#999;font-weight:400;font-size:11px">(partial)</span>' : '');
+      return '<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">'+label+'</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">'+w.count+deltaStr+'</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">'+(w.avgAhtMin!=null?w.avgAhtMin+' min':'—')+'</td></tr>';
     }).join("");
 
+    // Idle Time — ported from the dashboard's client-side idle-gap logic so
+    // the digest can flag it without anyone opening the dashboard first.
+    var weekEntriesRaw = getTimeEntries(weekStartStr, todayStr);
+    var weekEntries = (Array.isArray(weekEntriesRaw) ? weekEntriesRaw : []).filter(function(e){ return !isHiddenRosterName(e.analyst); });
+    var idleSummary = _digestSummarizeIdleGaps(weekEntries);
+    var idleSection = "";
+    if (idleSummary.gapCount > 0) {
+      var idleRows = idleSummary.topOffenders.map(function(o){
+        return '<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">'+esc(o.name)+'</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600">'+fmtMinShort(o.sec)+'</td></tr>';
+      }).join("");
+      idleSection = '<h3 style="margin:24px 0 4px;font-size:14px;color:#333">⏱️ Idle Time Gaps</h3>'
+        + '<p style="color:#888;font-size:12px;margin:0 0 8px">'+idleSummary.gapCount+' unaccounted gap'+(idleSummary.gapCount===1?'':'s')+' of 10+ min this week, totaling '+fmtMinShort(idleSummary.totalSec)+'</p>'
+        + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>'+idleRows+'</tbody></table>';
+    } else {
+      idleSection = '<h3 style="margin:24px 0 4px;font-size:14px;color:#333">⏱️ Idle Time Gaps</h3>'
+        + '<p style="color:#888;font-size:12px;margin:0">No unaccounted 10+ min gaps this week. 👍</p>';
+    }
+
     var totalCases = cases.length;
-    var html = '<div style="font-family:Arial,sans-serif;color:#222;max-width:520px">'
-      + '<h2 style="margin-bottom:4px">PI Productivity Suite — Weekly Digest</h2>'
-      + '<p style="color:#666;margin:0 0 16px">'+weekStartStr+' – '+todayStr+' · '+totalCases+' total cases</p>'
+    var gradientBg = "background:#d85a30;background:linear-gradient(135deg,#e35c3c 0%,#c23d6e 100%)";
+    var html = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Arial,sans-serif;color:#222;max-width:560px;margin:0 auto">'
+      + '<div style="'+gradientBg+';border-radius:14px 14px 0 0;padding:24px 24px 20px">'
+      +   '<h1 style="color:#fff;font-size:19px;font-weight:700;margin:0 0 4px">PI Productivity Suite — Weekly Digest</h1>'
+      +   '<p style="color:rgba(255,255,255,.85);font-size:13px;margin:0">'+weekStartStr+' – '+todayStr+' · '+totalCases+' total cases</p>'
+      + '</div>'
+      + '<div style="border:1px solid #eee;border-top:none;border-radius:0 0 14px 14px;padding:20px 24px 24px">'
       + attentionBanner
-      + '<h3 style="margin-bottom:6px">By Platform (This Week)</h3>'
-      + '<table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #333">Platform</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Cases</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Avg AHT</th></tr></thead><tbody>'
+      + '<h3 style="margin:0 0 6px;font-size:14px;color:#333">By Platform (This Week)</h3>'
+      + '<table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Platform</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Cases</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Avg AHT vs last wk</th></tr></thead><tbody>'
       + platformRows + '</tbody></table>'
-      + '<h3 style="margin:20px 0 6px">4-Week Trend</h3>'
-      + '<table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #333">Week</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Cases</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333">Avg AHT</th></tr></thead><tbody>'
+      + '<h3 style="margin:22px 0 6px;font-size:14px;color:#333">4-Week Trend</h3>'
+      + '<table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Week</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Cases</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Avg AHT</th></tr></thead><tbody>'
       + trendRows + '</tbody></table>'
-      + '<h3 style="margin:20px 0 6px">Top Analysts This Week</h3>'
-      + '<table style="border-collapse:collapse;width:100%;font-size:14px"><tbody>' + topRows + '</tbody></table>'
-      + '<p style="color:#888;font-size:12px;margin-top:24px">Sent automatically every Saturday. Manage recipients from the dashboard\'s Team Directory (admin only).</p>'
+      + idleSection
+      + '<h3 style="margin:22px 0 6px;font-size:14px;color:#333">Top Analysts This Week</h3>'
+      + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>' + topRows + '</tbody></table>'
+      + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Saturday. Manage recipients from the dashboard\'s Team Directory (admin only).</p>'
+      + '</div>'
       + '</div>';
 
     MailApp.sendEmail({
