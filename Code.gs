@@ -1040,7 +1040,7 @@ function sendWeeklyDigest() {
       + idleSection
       + '<h3 style="margin:22px 0 6px;font-size:14px;color:#333">Top Analysts This Week</h3>'
       + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>' + topRows + '</tbody></table>'
-      + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Saturday. Manage recipients from the dashboard\'s Team Directory (admin only).</p>'
+      + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Saturday.</p>'
       + '</div>'
       + '</div>';
 
