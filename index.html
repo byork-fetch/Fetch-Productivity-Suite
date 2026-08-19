@@ -665,9 +665,10 @@ function isHiddenAssignment(a){
 // ASSIGNMENTS CONTEXT — team_assignments rows fetched once at boot
 // (date-range-independent, via the lightweight getAssignments action) so
 // the Dashboard's Team/Role filters have something to populate from
-// without waiting on a full getTeamData() call. Team Directory keeps
-// fetching its own copy per date range via getTeamData() as before — this
-// is purely additive, for the Dashboard's use.
+// without waiting on a full getTeamData() call tied to whatever date
+// range happens to be selected. Team Directory keeps fetching its own copy
+// per date range via getTeamData() as before — this is purely additive,
+// for the Dashboard's use.
 // ============================================================
 function loadAssignments(){
   return apiGet("getAssignments").then(function(list){
@@ -840,6 +841,20 @@ function bootWithUser(user) {
     applyAnalystFilter();
     applyCaseFilter();
   });
+
+  // DEEP LINK — if the URL was opened with #team (e.g. the "Click here to
+  // review" button in the automated weekly email digest), jump straight to
+  // Team Directory instead of leaving the person to land on the default
+  // Dashboard view and navigate over manually. loadTeamData() reads its
+  // date range from the teamStartDate/teamEndDate inputs, which
+  // setDefaultDateRanges() already populated before bootWithUser() ran, so
+  // this is safe to call immediately rather than waiting on the promise
+  // chains above. Works for non-supervisors too — view-team already scopes
+  // correctly to "just this person" when state.user.isSupervisor is false.
+  if (window.location.hash.replace("#","") === "team") {
+    showView("team");
+    loadTeamData();
+  }
 }
 
 function setGreeting() {
