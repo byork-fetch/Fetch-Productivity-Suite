@@ -19,6 +19,10 @@ var EXTENSION_SECRET   = "fetch-fraud-squad";
 // Dashboard secret — used by the GitHub Pages frontend to authenticate
 // data fetch requests. Keep this in sync with DASHBOARD_SECRET in index.html.
 var DASHBOARD_SECRET   = "fps-dashboard-2024";
+// GitHub Pages URL the digest email links out to. "#team" tells index.html
+// (see the DOMContentLoaded hash check there) to open straight to Team
+// Directory instead of the default Dashboard view.
+var DASHBOARD_URL      = "https://byork-fetch.github.io/Fetch-Productivity-Suite/#team";
 
 function isPrivileged(role) {
   var r = (role || "").toLowerCase().trim();
@@ -984,8 +988,11 @@ function sendWeeklyDigest() {
 
     var attentionCount = _digestComputeOpenAttentionFlagCount();
     var attentionBanner = attentionCount > 0
-      ? '<div style="background:#fff8e6;border:1px solid #f5deb3;color:#7a5b00;padding:12px 16px;border-radius:10px;font-weight:600;font-size:13px;margin:0 0 20px">⚠️ '+attentionCount+' Needs Attention flag'+(attentionCount===1?'':'s')+' awaiting review on the dashboard</div>'
-      : '<div style="background:#eaf7ee;border:1px solid #bfe6c9;color:#1e6b34;padding:12px 16px;border-radius:10px;font-weight:600;font-size:13px;margin:0 0 20px">✅ No open Needs Attention flags</div>';
+      ? '<div style="background:#fff8e6;border:1px solid #f5deb3;color:#7a5b00;padding:12px 16px;border-radius:10px;font-weight:600;font-size:13px;margin:0 0 12px">⚠️ '+attentionCount+' Needs Attention flag'+(attentionCount===1?'':'s')+' awaiting review on the dashboard</div>'
+      : '<div style="background:#eaf7ee;border:1px solid #bfe6c9;color:#1e6b34;padding:12px 16px;border-radius:10px;font-weight:600;font-size:13px;margin:0 0 12px">✅ No open Needs Attention flags</div>';
+    var reviewButton = '<div style="text-align:center;margin:0 0 20px">'
+      + '<a href="'+DASHBOARD_URL+'" style="display:inline-block;background:linear-gradient(90deg,#e35c3c 0%,#c23d6e 100%);color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 24px;border-radius:8px">Click here to review →</a>'
+      + '</div>';
 
     var weeklyStats = _digestGetWeeklyStats(4);
     var trendRows = weeklyStats.map(function(w, idx){
@@ -1026,11 +1033,12 @@ function sendWeeklyDigest() {
     var gradientBg = "background:#d85a30;background:linear-gradient(135deg,#e35c3c 0%,#c23d6e 100%)";
     var html = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Arial,sans-serif;color:#222;max-width:560px;margin:0 auto">'
       + '<div style="'+gradientBg+';border-radius:14px 14px 0 0;padding:24px 24px 20px">'
-      +   '<h1 style="color:#fff;font-size:19px;font-weight:700;margin:0 0 4px">PI Productivity Suite, Weekly Digest</h1>'
+      +   '<h1 style="color:#fff;font-size:19px;font-weight:700;margin:0 0 4px">PI Productivity Suite — Weekly Digest</h1>'
       +   '<p style="color:rgba(255,255,255,.85);font-size:13px;margin:0">'+weekStartStr+' – '+todayStr+' · '+totalCases+' total cases</p>'
       + '</div>'
       + '<div style="border:1px solid #eee;border-top:none;border-radius:0 0 14px 14px;padding:20px 24px 24px">'
       + attentionBanner
+      + reviewButton
       + '<h3 style="margin:0 0 6px;font-size:14px;color:#333">By Platform (This Week)</h3>'
       + '<table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Platform</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Cases</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Avg AHT vs last wk</th></tr></thead><tbody>'
       + platformRows + '</tbody></table>'
@@ -1040,13 +1048,13 @@ function sendWeeklyDigest() {
       + idleSection
       + '<h3 style="margin:22px 0 6px;font-size:14px;color:#333">Top Analysts This Week</h3>'
       + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>' + topRows + '</tbody></table>'
-      + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Saturday.</p>'
+      + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Saturday. Manage recipients from the dashboard\'s Team Directory (admin only).</p>'
       + '</div>'
       + '</div>';
 
     MailApp.sendEmail({
       to: recipients.join(","),
-      subject: "PI Productivity Suite, Weekly Digest (" + weekStartStr + " – " + todayStr + ")",
+      subject: "PI Productivity Suite — Weekly Digest (" + weekStartStr + " – " + todayStr + ")",
       htmlBody: html
     });
   } catch(e) {
