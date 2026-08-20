@@ -349,23 +349,102 @@ function getAssignmentsList() {
 // ============================================================
 // PI CASES
 // ============================================================
+// ============================================================
+// CASES — READ-ONCE MEMOIZATION
+// _readAllCases() used to re-scan the ENTIRE Cases sheet (row 2 through the
+// last row, every row, every time) for every single date range it was
+// asked for — so cost scaled with total case history, not with the size of
+// the requested range, and "Today" was just as expensive as "90 Days."
+// Worse, a single sendWeeklyDigest() run calls _readAllCases() six times
+// for six different ranges, meaning six full re-reads of the whole sheet
+// in one execution — the actual cause of the >1 minute manual test run.
+//
+// Fix: read the whole sheet ONCE — compact array-of-arrays, not objects,
+// to keep the cached JSON smaller — then every _readAllCases() call just
+// filters that in-memory array by date, which is fast regardless of range.
+// _casesMemory covers reuse within a single execution (e.g. the digest's
+// six calls collapse into one Sheets read). CASES_CACHE_* below extends
+// that reuse across separate requests too, chunked because a single
+// Script Cache key caps at 100KB — case volume will exceed that within
+// days at current pace, so chunking meaningfully extends how much history
+// stays cache-served before falling back to a live read. bumpCacheVersion()
+// (already called on every case sync) invalidates this the same way it
+// invalidates every other cached read here.
+// ============================================================
+var _casesMemory = null;
+var CASES_CACHE_CHUNK_SIZE = 90000; // chars/key, under CacheService's 100KB/key limit
+var CASES_CACHE_MAX_CHUNKS = 12;    // ~1MB cap — beyond this we just skip caching and read live
+var CASES_CACHE_TTL = 120;
+
+function _getAllCasesRaw() {
+  if (_casesMemory) return _casesMemory; // already read this execution
+
+  var version = getCacheVersion();
+  var cache = CacheService.getScriptCache();
+  var metaKey = "cases_all_meta:v" + version;
+
+  try {
+    var metaRaw = cache.get(metaKey);
+    if (metaRaw) {
+      var meta = JSON.parse(metaRaw);
+      var parts = [];
+      for (var i = 0; i < meta.chunks; i++) {
+        var chunk = cache.get("cases_all_chunk" + i + ":v" + version);
+        if (!chunk) { parts = null; break; } // a chunk expired/evicted — treat the whole cache as unusable
+        parts.push(chunk);
+      }
+      if (parts) {
+        _casesMemory = JSON.parse(parts.join(""));
+        return _casesMemory;
+      }
+    }
+  } catch(e) { /* fall through to a live read */ }
+
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName(SHEET_CASES);
+  var results = [];
+  if (sheet && sheet.getLastRow() >= 2) {
+    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
+    var tz = Session.getScriptTimeZone();
+    for (var i = 0; i < data.length; i++) {
+      var row = data[i];
+      var dateStr = (row[0] instanceof Date) ? Utilities.formatDate(row[0], tz, "yyyy-MM-dd") : String(row[0] || "").substring(0, 10);
+      if (!dateStr) continue;
+      // Compact array form [date, analyst, platform, case_id, source, handle_seconds, solved_at]
+      // instead of an object — meaningfully smaller JSON, which matters
+      // here since it's what determines how much history fits per chunk.
+      results.push([dateStr, String(row[1]||""), String(row[2]||""), String(row[3]||""), String(row[4]||""), (typeof row[5]==="number"&&row[5]>0)?row[5]:null, String(row[7]||"")]);
+    }
+  }
+
+  _casesMemory = results;
+
+  try {
+    var json = JSON.stringify(results);
+    var chunkCount = Math.ceil(json.length / CASES_CACHE_CHUNK_SIZE);
+    if (chunkCount > 0 && chunkCount <= CASES_CACHE_MAX_CHUNKS) {
+      for (var c = 0; c < chunkCount; c++) {
+        cache.put("cases_all_chunk" + c + ":v" + version, json.substring(c*CASES_CACHE_CHUNK_SIZE, (c+1)*CASES_CACHE_CHUNK_SIZE), CASES_CACHE_TTL);
+      }
+      cache.put(metaKey, JSON.stringify({ chunks: chunkCount }), CASES_CACHE_TTL);
+    }
+    // Dataset too large to fit the chunk cap — fine, the per-execution
+    // memo above still collapses repeat calls within this same run.
+  } catch(e) { /* not cacheable — fine, skip it */ }
+
+  return _casesMemory;
+}
+
 function _readAllCases(startDate, endDate) {
   try {
-    return cachedCall("cases_raw:" + startDate + ":" + endDate, 120, function() {
-      var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
-      var sheet = ss.getSheetByName(SHEET_CASES);
-      if (!sheet || sheet.getLastRow() < 2) return [];
-      var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
-      var tz   = Session.getScriptTimeZone();
-      var results = [];
-      for (var i = 0; i < data.length; i++) {
-        var row = data[i];
-        var dateStr = (row[0] instanceof Date) ? Utilities.formatDate(row[0], tz, "yyyy-MM-dd") : String(row[0] || "").substring(0, 10);
-        if (!dateStr || dateStr < startDate || dateStr > endDate) continue;
-        results.push({ date: dateStr, analyst: String(row[1] || ""), platform: String(row[2] || ""), case_id: String(row[3] || ""), source: String(row[4] || ""), handle_seconds: (typeof row[5] === "number" && row[5] > 0) ? row[5] : null, solved_at: String(row[7] || "") });
-      }
-      return results;
-    });
+    var all = _getAllCasesRaw();
+    var results = [];
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i];
+      if (r[0] < startDate || r[0] > endDate) continue;
+      results.push({ date: r[0], analyst: r[1], platform: r[2], case_id: r[3], source: r[4], handle_seconds: r[5], solved_at: r[6] });
+    }
+    return results;
   } catch(e) { return []; }
 }
 
