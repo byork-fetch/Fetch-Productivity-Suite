@@ -372,14 +372,21 @@ function getAssignmentsList() {
 // invalidates every other cached read here.
 // ============================================================
 var _casesMemory = null;
+var _casesMemoryVersion = null; // BUGFIX: _casesMemory previously had no version check, so if
+  // Apps Script ever reused an execution container across separate requests (it can), a
+  // container that had computed an empty/stale result once would keep serving that same
+  // stale value indefinitely — completely bypassing bumpCacheVersion(), which every other
+  // cache layer here respects. Tying this to the version number closes that gap: any write
+  // (a new case syncing in, etc.) now invalidates the in-memory copy exactly like it already
+  // invalidates the CacheService copy below.
 var CASES_CACHE_CHUNK_SIZE = 90000; // chars/key, under CacheService's 100KB/key limit
 var CASES_CACHE_MAX_CHUNKS = 12;    // ~1MB cap — beyond this we just skip caching and read live
 var CASES_CACHE_TTL = 120;
 
 function _getAllCasesRaw() {
-  if (_casesMemory) return _casesMemory; // already read this execution
-
   var version = getCacheVersion();
+  if (_casesMemory && _casesMemoryVersion === version) return _casesMemory; // already read this execution, and still current
+
   var cache = CacheService.getScriptCache();
   var metaKey = "cases_all_meta:v" + version;
 
@@ -395,6 +402,7 @@ function _getAllCasesRaw() {
       }
       if (parts) {
         _casesMemory = JSON.parse(parts.join(""));
+        _casesMemoryVersion = version;
         return _casesMemory;
       }
     }
@@ -417,7 +425,11 @@ function _getAllCasesRaw() {
     }
   }
 
+  if (sheet && sheet.getLastRow() >= 2 && results.length === 0) {
+    Logger.log("_getAllCasesRaw: sheet has " + (sheet.getLastRow()-1) + " row(s) but 0 parsed into results — check for blank/malformed dates in column A of Cases");
+  }
   _casesMemory = results;
+  _casesMemoryVersion = version;
 
   try {
     var json = JSON.stringify(results);
