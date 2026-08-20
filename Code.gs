@@ -381,7 +381,9 @@ var _casesMemoryVersion = null; // BUGFIX: _casesMemory previously had no versio
   // invalidates the CacheService copy below.
 var CASES_CACHE_CHUNK_SIZE = 90000; // chars/key, under CacheService's 100KB/key limit
 var CASES_CACHE_MAX_CHUNKS = 12;    // ~1MB cap — beyond this we just skip caching and read live
-var CASES_CACHE_TTL = 120;
+var CASES_CACHE_TTL = 300; // was 120s — PI Cases (2 lookups per period switch: current + prior range)
+  // was expiring this cache twice as fast as getCaseTrends' own 300s aggregate cache, so PI Cases
+  // ended up doing more live Sheets reads than Case Trends despite being the more-used section.
 
 function _getAllCasesRaw() {
   var version = getCacheVersion();
