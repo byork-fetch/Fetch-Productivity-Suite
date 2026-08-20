@@ -1033,7 +1033,7 @@ function sendWeeklyDigest() {
     var gradientBg = "background:#d85a30;background:linear-gradient(135deg,#e35c3c 0%,#c23d6e 100%)";
     var html = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Arial,sans-serif;color:#222;max-width:560px;margin:0 auto">'
       + '<div style="'+gradientBg+';border-radius:14px 14px 0 0;padding:24px 24px 20px">'
-      +   '<h1 style="color:#fff;font-size:19px;font-weight:700;margin:0 0 4px">PI Productivity Suite — Weekly Digest</h1>'
+      +   '<h1 style="color:#fff;font-size:19px;font-weight:700;margin:0 0 4px">PI Productivity Suite, Weekly Digest</h1>'
       +   '<p style="color:rgba(255,255,255,.85);font-size:13px;margin:0">'+weekStartStr+' – '+todayStr+' · '+totalCases+' total cases</p>'
       + '</div>'
       + '<div style="border:1px solid #eee;border-top:none;border-radius:0 0 14px 14px;padding:20px 24px 24px">'
@@ -1048,13 +1048,13 @@ function sendWeeklyDigest() {
       + idleSection
       + '<h3 style="margin:22px 0 6px;font-size:14px;color:#333">Top Analysts This Week</h3>'
       + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>' + topRows + '</tbody></table>'
-      + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Saturday. Manage recipients from the dashboard\'s Team Directory (admin only).</p>'
+      + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Saturday.</p>'
       + '</div>'
       + '</div>';
 
     MailApp.sendEmail({
       to: recipients.join(","),
-      subject: "PI Productivity Suite — Weekly Digest (" + weekStartStr + " – " + todayStr + ")",
+      subject: "PI Productivity Suite, Weekly Digest (" + weekStartStr + " – " + todayStr + ")",
       htmlBody: html
     });
   } catch(e) {
