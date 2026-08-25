@@ -19,23 +19,12 @@
   --shadow-med:0 8px 24px -4px hsl(355,75%,60%,0.2);
 }
 .dark{--bg:hsl(0,0%,10%);--card:hsl(0,0%,14%);--border:hsl(0,0%,20%);--text:hsl(0,0%,95%);--text-muted:hsl(0,0%,60%);--muted-bg:hsl(0,0%,18%);}
-/* THEME PALETTES — color-only overrides (primary/accent/gradients). Applied
-   as a class on <body> alongside (not instead of) .dark, so light/dark and
-   color palette are independent choices — .dark controls bg/card/border/
-   text, these control brand color only. .theme-fetch mirrors the :root
-   defaults above so nothing changes visually if it's the active/default
-   theme; it exists mainly so "fetch" is a real, selectable option in the
-   picker rather than an implicit fallback. */
 .theme-fetch{--primary:hsl(355,75%,60%);--accent:hsl(330,65%,55%);--gradient:linear-gradient(135deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--gradient-btn:linear-gradient(90deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--shadow-soft:0 4px 16px -2px hsl(355,75%,60%,0.15);--shadow-med:0 8px 24px -4px hsl(355,75%,60%,0.2);}
 .theme-ocean{--primary:hsl(205,80%,55%);--accent:hsl(190,70%,50%);--gradient:linear-gradient(135deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);--gradient-btn:linear-gradient(90deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);--shadow-soft:0 4px 16px -2px hsl(205,80%,55%,0.15);--shadow-med:0 8px 24px -4px hsl(205,80%,55%,0.2);}
 .theme-forest{--primary:hsl(150,55%,38%);--accent:hsl(90,45%,45%);--gradient:linear-gradient(135deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);--gradient-btn:linear-gradient(90deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);--shadow-soft:0 4px 16px -2px hsl(150,55%,38%,0.15);--shadow-med:0 8px 24px -4px hsl(150,55%,38%,0.2);}
 .theme-sunset{--primary:hsl(28,90%,55%);--accent:hsl(350,80%,60%);--gradient:linear-gradient(135deg,hsl(38,95%,55%) 0%,hsl(350,80%,60%) 100%);--gradient-btn:linear-gradient(90deg,hsl(38,95%,55%) 0%,hsl(350,80%,60%) 100%);--shadow-soft:0 4px 16px -2px hsl(28,90%,55%,0.15);--shadow-med:0 8px 24px -4px hsl(28,90%,55%,0.2);}
 .theme-grape{--primary:hsl(265,60%,58%);--accent:hsl(300,55%,55%);--gradient:linear-gradient(135deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);--gradient-btn:linear-gradient(90deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);--shadow-soft:0 4px 16px -2px hsl(265,60%,58%,0.15);--shadow-med:0 8px 24px -4px hsl(265,60%,58%,0.2);}
 .theme-slate{--primary:hsl(210,20%,45%);--accent:hsl(210,15%,35%);--gradient:linear-gradient(135deg,hsl(215,25%,42%) 0%,hsl(210,15%,32%) 100%);--gradient-btn:linear-gradient(90deg,hsl(215,25%,42%) 0%,hsl(210,15%,32%) 100%);--shadow-soft:0 4px 16px -2px hsl(210,20%,45%,0.15);--shadow-med:0 8px 24px -4px hsl(210,20%,45%,0.2);}
-/* THEME PICKER — modal swatch grid. Preview backgrounds are literal
-   (duplicated) gradient values rather than referencing the CSS vars above,
-   since a swatch needs to preview a theme regardless of which theme is
-   currently active on <body>. */
 .theme-swatch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:.85rem;}
 .theme-swatch{cursor:pointer;border:2px solid var(--border);border-radius:.65rem;padding:.6rem;text-align:center;transition:border-color .15s,transform .15s;background:var(--card);}
 .theme-swatch:hover{transform:translateY(-2px);}
@@ -50,8 +39,6 @@
 .theme-swatch-preview-slate{background:linear-gradient(135deg,hsl(215,25%,42%) 0%,hsl(210,15%,32%) 100%);}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);transition:background .3s,color .3s;font-size:15px;line-height:1.5;}
 .container{max-width:1280px;margin:0 auto;padding:2rem 1.5rem;}
-
-/* LOGIN */
 #login-screen{display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--bg);}
 #login-screen.visible{display:flex;}
 .login-card{background:var(--card);border:1px solid var(--border);border-radius:1.25rem;padding:3rem 2.5rem;width:100%;max-width:420px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.08);}
@@ -62,8 +49,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #g_id_signin{display:flex;justify-content:center;}
 .login-error{margin-top:1rem;padding:.65rem 1rem;background:hsl(0,70%,97%);border:1px solid hsl(0,70%,88%);color:hsl(0,65%,45%);border-radius:.5rem;font-size:.83rem;display:none;}
 .login-error.visible{display:block;}
-
-/* MAIN */
 .header{background:var(--gradient);border-radius:var(--radius);padding:2rem;box-shadow:var(--shadow-med);margin-bottom:2rem;}
 .header-top{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;}
 .header h1{color:#fff;font-size:2rem;font-weight:700;}
@@ -91,19 +76,6 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .stat-sub{font-size:.75rem;color:var(--text-muted);margin-top:.2rem;}
 .main-grid{display:grid;grid-template-columns:1fr 320px;gap:1.5rem;margin-bottom:1.5rem;}
 @media(max-width:900px){.main-grid{grid-template-columns:1fr;}}
-/* CASES BY PLATFORM / CASE PERFORMANCE — scoped so these two cards match
-   height, whichever is naturally taller. Grid already stretches the row's
-   items to the tallest one's height by default (align-items:stretch); the
-   piece that was missing is that neither card's *internal* content actually
-   filled that stretched height, so the shorter card (the chart) just left
-   blank space below its own border while the taller card (the analyst list,
-   capped at 420px) extended further down. Turning both cards (and their
-   card-bodies) into flex columns lets the shorter side's content actually
-   grow to fill the stretched height instead of stopping short of it. This
-   is intentionally scoped to .cases-grid only — the other main-grid
-   sections (Reporting Period/Time by Task vs Analyst Logged Time) are left
-   as-is since nobody asked to change those.
-*/
 .cases-grid{align-items:stretch;}
 .cases-grid .left-col{display:flex;flex-direction:column;}
 .cases-grid .left-col .card{flex:1;display:flex;flex-direction:column;}
@@ -136,13 +108,6 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .collapsible-trigger.open svg{transform:rotate(180deg);}
 .collapsible-content{display:none;padding:0 1.5rem 1.5rem;}
 .collapsible-content.open{display:block;}
-/* Needs Attention content uses a flex column layout when open, instead of
-   the default block the rest of the collapsibles use. This used to be set
-   via an inline style="display:flex" on the element itself, which — being
-   more specific than any class selector — permanently overrode the
-   .collapsible-content{display:none} rule above, so toggling the "open"
-   class never actually hid the section. Moved to a class here instead so
-   the open/closed toggle can control it like every other collapsible. */
 .attention-content.open{display:flex;flex-direction:column;gap:.5rem;}
 .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:.5rem;}
 table{width:100%;border-collapse:collapse;font-size:.83rem;min-width:700px;}
@@ -217,6 +182,16 @@ textarea{resize:vertical;min-height:80px;}
 .toast.success{background:hsl(142,60%,40%);}.toast.error{background:hsl(0,70%,50%);}.toast.info{background:hsl(355,75%,55%);}
 @keyframes slideIn{from{opacity:0;transform:translateX(20px);}to{opacity:1;transform:none;}}
 ::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+/* CASE STATS PERIOD BAR — compact period control shown directly above the
+   top "Cases / Kount AHT / Zendesk AHT / RADAR AHT" quick-view tiles, so
+   the period that's actually driving those four numbers is visible and
+   changeable right there, instead of only reachable by scrolling down to
+   the "PI Cases" section header. Renders the exact same buttons as
+   #casePeriodControls (see renderCasePeriodControls() in the script below,
+   which now targets both containers) — it's the same state.casePeriodMode,
+   just a second, more visible place to see/change it. */
+.case-stats-period-bar{display:flex;align-items:center;justify-content:center;gap:.6rem;flex-wrap:wrap;margin:0 0 .6rem;}
+.case-stats-period-bar .platform-filter-row{margin:0;justify-content:center;}
 </style>
 </head>
 <body>
@@ -260,6 +235,7 @@ textarea{resize:vertical;min-height:80px;}
     <div id="view-dashboard">
       <div class="greeting-card" id="greeting"></div>
       <div class="stats-grid" id="statsGrid"></div>
+      <div class="case-stats-period-bar" id="caseStatsGridPeriodControls"></div>
       <div class="stats-grid-centered" id="caseStatsGrid"></div>
       <div class="main-grid">
         <div class="left-col">
@@ -509,15 +485,6 @@ function apiGet(action, params) {
 
 function apiPost(payload) {
   payload.dashSecret = DASH_SECRET;
-  // NOTE: Content-Type is intentionally "text/plain" here, NOT "application/json".
-  // A POST with an application/json Content-Type is a non-simple cross-origin
-  // request, which forces the browser to send a CORS preflight (OPTIONS) first.
-  // Apps Script web app deployments don't implement doOptions() / preflight
-  // responses, so that preflight fails and the browser throws
-  // "TypeError: Failed to fetch" before doPost() ever runs server-side.
-  // text/plain keeps this a "simple request" (no preflight), and Code.gs
-  // already does JSON.parse(e.postData.contents) itself, so it doesn't care
-  // what Content-Type header we actually send.
   return fetch(EXEC_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -589,12 +556,7 @@ var state = {
 };
 
 // ============================================================
-// FILTER PERSISTENCE — remembers case period/platform/search and the
-// analyst sub-filters across page reloads, so a supervisor's view doesn't
-// reset every time the dashboard is refreshed. Deliberately does NOT persist
-// the Reporting Period month (that already has its own "current month, or
-// most recent with data" smart default) or the header Analyst filter for
-// non-supervisors (always forced to their own name regardless).
+// FILTER PERSISTENCE
 // ============================================================
 var FILTER_PREFS_KEY = "fps_filter_prefs";
 
@@ -614,8 +576,8 @@ function loadFilterPrefs(){
     if (p.overviewActivityFilter) state.overviewActivityFilter = p.overviewActivityFilter;
     if (p.dashboardTeamFilter) state.dashboardTeamFilter = p.dashboardTeamFilter;
     if (p.dashboardRoleFilter) state.dashboardRoleFilter = p.dashboardRoleFilter;
-    if (p.selectedAnalyst) state._savedSelectedAnalyst = p.selectedAnalyst; // applied conditionally in bootWithUser
-  } catch(e) { /* ignore corrupt/unavailable storage */ }
+    if (p.selectedAnalyst) state._savedSelectedAnalyst = p.selectedAnalyst;
+  } catch(e) { }
 }
 
 function persistFilterPrefs(){
@@ -634,22 +596,11 @@ function persistFilterPrefs(){
       dashboardRoleFilter: state.dashboardRoleFilter,
       selectedAnalyst: state.selectedAnalyst
     }));
-  } catch(e) { /* ignore — not critical if this fails */ }
+  } catch(e) { }
 }
 
 // ============================================================
-// HIDDEN TEAMS / ROLES — internal admin/coordinator groupings that should
-// never appear as filter options or as members anywhere in Team Directory
-// or the Dashboard's "All"/aggregate views (they can still be found by
-// picking their name directly in the header Analyst dropdown, same as any
-// other privileged account). Matched against team_assignments columns C
-// (team_name) and D (role) exactly as stored in the Sheet.
-//
-// NOTE: "Sr Platform Integrity Intel Spec" below is a best guess — the
-// source screenshot had the middle of that label covered by a marker
-// X, showing only "Sr Plat Integ…ntel Spec". If members of that role are
-// still showing up anywhere they shouldn't, this is almost certainly why:
-// check team_assignments column D for the exact string and fix it here.
+// HIDDEN TEAMS / ROLES
 // ============================================================
 var HIDDEN_TEAM_NAMES  = ["Trust & Safety Intel", "Kirby Stars"];
 var HIDDEN_ROLE_LABELS = ["Fraud Ops Coordinator", "QA Coordinator", "Sr Platform Integrity Intel Spec", "Training Coordinator"];
@@ -662,13 +613,7 @@ function isHiddenAssignment(a){
 }
 
 // ============================================================
-// ASSIGNMENTS CONTEXT — team_assignments rows fetched once at boot
-// (date-range-independent, via the lightweight getAssignments action) so
-// the Dashboard's Team/Role filters have something to populate from
-// without waiting on a full getTeamData() call tied to whatever date
-// range happens to be selected. Team Directory keeps fetching its own copy
-// per date range via getTeamData() as before — this is purely additive,
-// for the Dashboard's use.
+// ASSIGNMENTS CONTEXT
 // ============================================================
 function loadAssignments(){
   return apiGet("getAssignments").then(function(list){
@@ -706,10 +651,6 @@ function updateDashboardTeamRoleFilterOptions(){
   teamSel.value = keepTeam; roleSel.value = keepRole;
 }
 
-// Whether an analyst (by name) passes the Dashboard's Team/Role header
-// filters, when set to something other than "all". Only meaningful for the
-// "All Analysts" aggregate — a specifically-selected analyst bypasses this
-// (same precedence the existing Analyst dropdown already has).
 function passesDashboardTeamRoleFilter(name){
   var key = normName(name);
   if (state.dashboardTeamFilter && state.dashboardTeamFilter !== "all" && state.analystTeamMap[key] !== state.dashboardTeamFilter) return false;
@@ -718,21 +659,8 @@ function passesDashboardTeamRoleFilter(name){
 }
 
 // ============================================================
-// PRIVILEGED-NAME EXCLUSION — supervisors and admins tend to log a lot of
-// meetings/events rather than case-queue work, since they aren't in the
-// queues as often as analysts. Their numbers stay fully viewable if someone
-// picks them by name in a dropdown, but they're excluded from any team-wide
-// aggregate: "All Analysts" on the dashboard, "All Teams"/per-team views in
-// Team Directory, and the Needs Attention banner's team-average baseline.
+// PRIVILEGED-NAME EXCLUSION
 // ============================================================
-// Normalizes a name for matching across sheets (time_entries.analyst,
-// users.display_name, team_assignments.analyst_name). These are three
-// independently-typed free-text fields, so a stray trailing space or a
-// capitalization difference between them was silently breaking the
-// privileged/hidden-name exclusion — the set lookup never matched, and the
-// account quietly stayed in the "All Analysts" aggregate with no error
-// anywhere. Comparing normalized forms everywhere these names are keyed or
-// looked up makes that class of mismatch a non-issue.
 function normName(s){ return String(s||"").trim().toLowerCase(); }
 
 function computePrivilegedNames(usersList){
@@ -744,10 +672,6 @@ function computePrivilegedNames(usersList){
   return set;
 }
 
-// Strictly "admin" only — distinct from state.user.isSupervisor, which the
-// backend (isPrivileged() in Code.gs) treats as true for BOTH "admin" and
-// "supervisor" roles. Needs Attention is meant to be admin-eyes-only, so it
-// needs this narrower check rather than reusing isSupervisor.
 function isAdminUser(){
   return (state.user.role||"").toLowerCase().trim()==="admin";
 }
@@ -821,15 +745,6 @@ function bootWithUser(user) {
     if (typeof google!=="undefined"&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect();
     window.location.reload();
   });
-  // loadTeamRoleContext() is intentionally NOT in this chain. It's a new,
-  // separate Sheets read (getAssignments) that's uncached on first call —
-  // gating the initial months/cases load behind it (as an earlier version
-  // of this file did via Promise.all) added a real, sometimes-multi-second
-  // delay before "Cases by Platform" had anything to render, which is why
-  // it looked like it "wasn't loading quickly enough or at all." It now
-  // runs in parallel and simply re-applies the aggregate filters once it
-  // resolves, so hidden/privileged exclusion still ends up correct without
-  // holding up everything else.
   loadPrivilegedNames().then(function(){
     loadMonths();
     renderCasePeriodControls();
@@ -842,15 +757,6 @@ function bootWithUser(user) {
     applyCaseFilter();
   });
 
-  // DEEP LINK — if the URL was opened with #team (e.g. the "Click here to
-  // review" button in the automated weekly email digest), jump straight to
-  // Team Directory instead of leaving the person to land on the default
-  // Dashboard view and navigate over manually. loadTeamData() reads its
-  // date range from the teamStartDate/teamEndDate inputs, which
-  // setDefaultDateRanges() already populated before bootWithUser() ran, so
-  // this is safe to call immediately rather than waiting on the promise
-  // chains above. Works for non-supervisors too — view-team already scopes
-  // correctly to "just this person" when state.user.isSupervisor is false.
   if (window.location.hash.replace("#","") === "team") {
     showView("team");
     loadTeamData();
@@ -870,12 +776,6 @@ function setGreeting() {
 }
 
 function loadMonths() {
-  // Speed optimization: don't wait for the months list before loading data.
-  // Assume the current month (the overwhelmingly common case) and kick off
-  // its entries/cases fetch immediately, in parallel with the months-list
-  // request, instead of two round-trips back-to-back. If it turns out the
-  // current month has no data, we fall back to the most recent month once
-  // the months list comes back.
   var cur = formatMonthKey(new Date());
   state.selectedMonth = cur;
   var sel = document.getElementById("monthSelect");
@@ -883,11 +783,10 @@ function loadMonths() {
   fetchEntries();
 
   apiGet("getAvailableMonths").then(function(months) {
-    if (!months||months.error||months.length===0) return; // current month already showing, nothing to correct
+    if (!months||months.error||months.length===0) return;
     sel.innerHTML = "";
     months.forEach(function(m){ var o=document.createElement("option"); o.value=m; o.textContent=formatMonthLabel(m); sel.appendChild(o); });
     if (months.indexOf(cur) === -1) {
-      // No entries for the current month yet — switch to the most recent month with data.
       state.selectedMonth = months[0]; sel.value = months[0];
       fetchEntries();
     } else {
@@ -913,13 +812,6 @@ function fetchEntries() {
 
 // ============================================================
 // DETAILED TIME LOG — CUSTOM RANGE
-// Independent of the Reporting Period month selector, same relationship the
-// Case Period widget already has to it. Only affects the Detailed Time Log
-// table itself (and the Analyst/Activity dropdowns immediately above it) —
-// Time by Task, Analyst Logged Time, and the stat cards keep using the
-// Reporting Period month regardless, since those are a different question
-// ("how's this month looking") from "let me pull an arbitrary range of raw
-// entries."
 // ============================================================
 function applyTimeLogCustomRange() {
   var s = document.getElementById("timeLogCustomStart").value, e = document.getElementById("timeLogCustomEnd").value;
@@ -947,10 +839,6 @@ function clearTimeLogCustomRange() {
 
 // ============================================================
 // CASE PERIOD — decoupled from the Reporting Period month selector.
-// Cases (and their AHT) are filtered by their own Today/Week/Month/Custom
-// range so supervisors can look at raw per-case numbers over whatever
-// window is actually relevant, instead of being stuck on a fixed "this
-// week" average or tied to the time-tracker's month view.
 // ============================================================
 function getCasePeriodBounds() {
   var now = new Date();
@@ -959,16 +847,10 @@ function getCasePeriodBounds() {
   if (state.casePeriodMode === "30d") { return { start:formatDate(new Date(now.getTime()-29*86400000)), end:formatDate(now) }; }
   if (state.casePeriodMode === "60d") { return { start:formatDate(new Date(now.getTime()-59*86400000)), end:formatDate(now) }; }
   if (state.casePeriodMode === "90d") { return { start:formatDate(new Date(now.getTime()-89*86400000)), end:formatDate(now) }; }
-  // custom
   var s = state.casePeriodStart || formatDate(now), e = state.casePeriodEnd || formatDate(now);
   return { start:s, end:e };
 }
 
-// "Aug 3 – Aug 9" for same-year multi-day ranges, "Aug 3" for single-day
-// (Today), "Dec 29, 2025 – Jan 4, 2026" if the range crosses a year boundary.
-// Used to append the concrete date span next to the period label so it stays
-// accurate as the underlying range silently shifts day-to-day (e.g. "This
-// Week" or "30 Days" cover different actual dates tomorrow than they do today).
 function formatDateRangeDisplay(startStr, endStr) {
   var s = new Date(startStr+"T00:00:00"), e = new Date(endStr+"T00:00:00");
   var opts = {month:"short", day:"numeric"};
@@ -987,11 +869,9 @@ function casePeriodLabel() {
   if (state.casePeriodMode === "30d")   return "Last 30 Days · " + rangeStr;
   if (state.casePeriodMode === "60d")   return "Last 60 Days · " + rangeStr;
   if (state.casePeriodMode === "90d")   return "Last 90 Days · " + rangeStr;
-  return rangeStr; // custom — just the range itself, no need to repeat "Custom"
+  return rangeStr;
 }
 
-// The immediately-preceding period of the same length, used for the
-// period-over-period delta indicators on the case stat cards.
 function getPriorCasePeriodBounds(bounds) {
   var start = new Date(bounds.start+"T00:00:00"), end = new Date(bounds.end+"T00:00:00");
   var dayCount = Math.round((end.getTime()-start.getTime())/86400000) + 1;
@@ -1000,13 +880,24 @@ function getPriorCasePeriodBounds(bounds) {
   return { start: formatDate(priorStart), end: formatDate(priorEnd) };
 }
 
+// CASE PERIOD CONTROLS — now rendered into every container listed here, so
+// the same Today/This Week/30/60/90/Custom buttons appear both above the
+// top "Cases / Kount AHT / Zendesk AHT / RADAR AHT" quick-view tiles AND
+// next to the "PI Cases" section header further down. Both read/write the
+// same state.casePeriodMode, so picking a period in either spot updates
+// both — there's only ever one period in play, just two visible places to
+// see and change it.
+var CASE_PERIOD_CONTROL_CONTAINER_IDS = ["caseStatsGridPeriodControls", "casePeriodControls"];
+
 function renderCasePeriodControls() {
   var opts = [["today","Today"],["week","This Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
-  var el = document.getElementById("casePeriodControls");
-  if (!el) return;
-  el.innerHTML = opts.map(function(o){
+  var html = opts.map(function(o){
     return '<button class="platform-filter-btn'+(state.casePeriodMode===o[0]?' active':'')+'" onclick="setCasePeriod(\''+o[0]+'\')">'+o[1]+'</button>';
   }).join("");
+  CASE_PERIOD_CONTROL_CONTAINER_IDS.forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  });
   var customRow = document.getElementById("casePeriodCustomRow");
   if (customRow) customRow.style.display = state.casePeriodMode === "custom" ? "flex" : "none";
   if (state.casePeriodMode === "custom") {
@@ -1027,6 +918,12 @@ function setCasePeriod(mode) {
       startInput.value = formatDate(new Date(now.getTime() - 6*86400000));
       endInput.value = formatDate(now);
     }
+    // Custom picker inputs live only in the PI Cases section (not
+    // duplicated above the quick-view tiles) — scroll there so whoever
+    // clicked "Custom" from the top bar can see the date fields they need
+    // to fill in, instead of wondering why nothing happened.
+    var customRow = document.getElementById("casePeriodCustomRow");
+    if (customRow) customRow.scrollIntoView({ behavior:"smooth", block:"center" });
     return; // wait for Apply
   }
   fetchCasesForPeriod();
@@ -1066,17 +963,11 @@ function applyCaseFilter() {
   state.priorCases = filterCasesForCurrentScope(state.allPriorRangeCases||[]);
   updateCaseSourceFilterOptions();
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
-  if (state.trendsLoaded) loadTrendsData(); // analyst scoping now happens server-side, so re-fetch (a small, fast, cached call) rather than re-filtering client-side
+  if (state.trendsLoaded) loadTrendsData();
 }
 
 // ============================================================
-// CASE TRENDS — lazily fetched the first time the collapsible is opened
-// (not on every page load). Fetches pre-aggregated weekly summaries from
-// getCaseTrends (a handful of small {start,end,count,avgAhtMin} objects)
-// rather than every individual case for the window — at real case volumes,
-// shipping raw rows to the browser and bucketing client-side got both slow
-// and too large to cache server-side, so the aggregation now happens in
-// Code.gs instead.
+// CASE TRENDS
 // ============================================================
 function toggleTrendsSection(){
   toggleCollapsible('trends');
@@ -1086,9 +977,6 @@ function toggleTrendsSection(){
   }
 }
 
-// Mirrors filterCasesForCurrentScope's scoping rule, but as the single
-// param string getCaseTrends expects: a specific analyst name, or "all"
-// (server excludes admin/supervisor accounts from "all" automatically).
 function getCaseTrendsAnalystParam(){
   if (!state.user.isSupervisor && state.user.displayName) return state.user.displayName;
   return state.selectedAnalyst || "all";
@@ -1131,10 +1019,6 @@ function renderTrendsChart(){
   });
 }
 
-// Rebuilds the Source dropdown from whatever sources actually appear in the
-// currently loaded case set, same pattern as updateTimeLogFilterOptions.
-// Keeps the current selection if it's still a valid option, otherwise
-// falls back to "All Sources" rather than silently clearing to nothing.
 function updateCaseSourceFilterOptions(){
   var sel = document.getElementById("caseSourceFilterSelect");
   if (!sel) return;
@@ -1145,11 +1029,6 @@ function updateCaseSourceFilterOptions(){
   sel.value = keep;
 }
 
-// Scopes a raw entries array to what the current user/analyst-filter should
-// see — same rule set applyAnalystFilter uses for state.allMonthEntries, but
-// extracted so the Detailed Time Log's independent custom range (which
-// fetches its own entries outside the Reporting Period month) can apply the
-// identical scoping without duplicating the branching logic.
 function scopeEntriesForCurrentUser(entries){
   if (!state.user.isSupervisor && state.user.displayName) return entries.filter(function(e){return e.analyst===state.user.displayName;});
   if (state.selectedAnalyst==="all") return entries.filter(function(e){var k=normName(e.analyst);return !state.privilegedNames[k] && !state.hiddenAssignmentNames[k] && passesDashboardTeamRoleFilter(e.analyst);});
@@ -1177,9 +1056,6 @@ function renderStats() {
   document.getElementById("statsGrid").innerHTML=cards.map(function(c){return '<div class="stat-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("");
 }
 
-// Small ▲/▼ badge comparing a current value to the prior period's value.
-// For case counts, direction is neutral (more isn't inherently good or bad).
-// For AHT, lower is better (faster), so a drop renders green and a rise red.
 function deltaBadge(curVal, priorVal, lowerIsBetter) {
   if (curVal==null || priorVal==null || !priorVal) return "";
   var diff = curVal - priorVal;
@@ -1192,7 +1068,7 @@ function deltaBadge(curVal, priorVal, lowerIsBetter) {
 }
 
 function renderCaseStats() {
-  var inRange=state.cases; // already scoped to the selected case period (Today/Week/Month/Custom)
+  var inRange=state.cases;
   var prior=state.priorCases||[];
   var kc=inRange.filter(function(c){return c.platform==='Kount';}), zc=inRange.filter(function(c){return c.platform==='Zendesk';}), rc=inRange.filter(function(c){return c.platform==='RADAR';});
   var ka=ahtFromCases(kc), za=ahtFromCases(zc), ra=ahtFromCases(rc);
@@ -1215,22 +1091,8 @@ function renderCaseChart() {
   var counts={Kount:0,Zendesk:0,RADAR:0};
   state.cases.forEach(function(c){if(counts[c.platform]!==undefined)counts[c.platform]++;});
   var labels=Object.keys(counts), values=labels.map(function(k){return counts[k];});
-  // NOTE: no longer sets a fixed canvas.style.height here — the .chart-wrap
-  // parent is now a flex:1 child inside .cases-grid (see CSS), so it's
-  // already stretched to match the Case Performance card's height. Chart.js
-  // (responsive:true, maintainAspectRatio:false below) reads that parent's
-  // actual rendered height via ResizeObserver and sizes the canvas to fill
-  // it, so a fixed pixel height here would just fight the flex layout.
   if (state.caseChart){state.caseChart.destroy();state.caseChart=null;}
   if (values.every(function(v){return v===0;})){
-    // IMPORTANT: hide the canvas rather than replacing its parent's
-    // innerHTML. Overwriting innerHTML here used to remove the <canvas>
-    // node from the DOM entirely — every subsequent renderCaseChart() call
-    // then found nothing at getElementById("caseChart") and bailed out via
-    // the `if(!canvas)return;` guard above, so the chart could get
-    // permanently stuck showing "No cases" even after real data loaded.
-    // Toggling visibility keeps the canvas in the DOM so it's always
-    // findable on the next render.
     canvas.style.display="none";
     if (emptyEl) emptyEl.style.display="block";
     return;
@@ -1263,15 +1125,11 @@ function setCasePlatformFilter(platform) {
   renderCaseLog();
 }
 
-// Flags a case's handle time as a statistical outlier relative to its
-// platform's timed cases in the currently visible range — 2+ standard
-// deviations from the mean, with a minimum sample size so small case
-// counts don't get flagged off noise.
 function computeCaseOutlierFlags(cases) {
-  var flags = {}; // case_id+platform+date -> {dir, times}
+  var flags = {};
   ["Kount","Zendesk","RADAR"].forEach(function(platform){
     var timed = cases.filter(function(c){ return c.platform===platform && typeof c.handle_seconds==="number" && c.handle_seconds>0; });
-    if (timed.length < 5) return; // not enough data to judge outliers
+    if (timed.length < 5) return;
     var mean = timed.reduce(function(a,c){return a+c.handle_seconds;},0)/timed.length;
     var variance = timed.reduce(function(a,c){return a+Math.pow(c.handle_seconds-mean,2);},0)/timed.length;
     var stddev = Math.sqrt(variance);
@@ -1287,8 +1145,6 @@ function computeCaseOutlierFlags(cases) {
   return flags;
 }
 
-// Shared by renderCaseLog and exportCaseLogCSV so platform/source/search
-// filtering logic lives in exactly one place.
 function getFilteredCaseLogRows(){
   var filtered = state.casePlatformFilter === "all" ? state.cases : state.cases.filter(function(c){ return c.platform === state.casePlatformFilter; });
   if (state.caseSourceFilter !== "all") filtered = filtered.filter(function(c){ return c.source === state.caseSourceFilter; });
@@ -1300,7 +1156,7 @@ function getFilteredCaseLogRows(){
 function renderCaseLog() {
   var filtered = getFilteredCaseLogRows();
   var sorted=filtered.slice().sort(function(a,b){var f=state.caseSortField,dir=state.caseSortDir==="asc"?1:-1,av=a[f],bv=b[f];if(typeof av==="number"||typeof bv==="number")return((av||0)-(bv||0))*dir;return String(av||"").localeCompare(String(bv||""))*dir;});
-  var outliers = computeCaseOutlierFlags(state.cases); // flag against the whole visible period/platform set, not just the search/sort result
+  var outliers = computeCaseOutlierFlags(state.cases);
   document.getElementById("caseLogBody").innerHTML=sorted.length===0?'<tr><td colspan="6" class="empty">No cases match filters</td></tr>':sorted.map(function(c){
     var pc=c.platform==='Kount'?'badge-kount':c.platform==='Zendesk'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':'';
     var flag = outliers[c.platform+"|"+c.case_id+"|"+c.date];
@@ -1342,9 +1198,6 @@ function renderChart(){
   var emptyEl=document.getElementById("taskChartEmpty");
   if(state.taskChart){state.taskChart.destroy();state.taskChart=null;}
   if(!labels.length){
-    // Same fix as renderCaseChart: hide the canvas instead of replacing its
-    // parent's innerHTML, which used to permanently remove the <canvas>
-    // node and break every future render for this chart.
     canvas.style.display="none";
     if (emptyEl) emptyEl.style.display="block";
     return;
@@ -1355,9 +1208,6 @@ function renderChart(){
   state.taskChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:labels.map(function(_,i){return colors[i%colors.length];}),borderRadius:6}]},options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return " "+fmtDurationShort(Math.round(ctx.raw*3600));}}}},scales:{x:{title:{display:true,text:"Hours"},ticks:{color:state.isDark?"#ccc":"#555"}},y:{grid:{display:false},ticks:{color:state.isDark?"#ccc":"#555",font:{size:11}}}},responsive:true,maintainAspectRatio:false}});
 }
 
-// The entry set the Detailed Time Log's own Analyst/Activity dropdowns and
-// table are built from — the independent custom range if one is applied,
-// otherwise the Reporting Period month's entries as usual.
 function getTimeLogSourceEntries(){
   return state.timeLogCustomRange.active ? scopeEntriesForCurrentUser(state.timeLogCustomRange.entries) : state.entries;
 }
@@ -1376,9 +1226,6 @@ function updateTimeLogFilterOptions(){
   analystSel.value=keepAnalyst; activitySel.value=keepActivity;
 }
 
-// Time by Task / Analyst Logged Time get their own Activity filter — narrowing
-// by analyst is already the header Analyst filter's job page-wide, so we don't
-// duplicate that control here.
 function updateOverviewFilterOptions(){
   var activitySel=document.getElementById("overviewActivityFilter");
   if(!activitySel) return;
@@ -1389,8 +1236,6 @@ function updateOverviewFilterOptions(){
   activitySel.value=keepActivity;
 }
 
-// The entries Time by Task / Analyst Logged Time actually render from, after
-// applying the Activity filter on top of state.entries.
 function getOverviewEntries(){
   return state.entries.filter(function(e){
     if(state.overviewActivityFilter!=="all"&&e.task!==state.overviewActivityFilter) return false;
@@ -1416,11 +1261,9 @@ function sortEntries(arr){return arr.slice().sort(function(a,b){var av=a[state.s
 function sortTable(field){state.sortDir=state.sortField===field?(state.sortDir==="asc"?"desc":"asc"):"asc";state.sortField=field;renderTimeLog();}
 
 // ============================================================
-// IDLE TIME GAPS — flags unaccounted-for time between consecutive logged
-// activities (same analyst, same day) where nothing was logged to cover it —
-// often a better "something's off" signal than raw handle time.
+// IDLE TIME GAPS
 // ============================================================
-var IDLE_GAP_THRESHOLD_SEC = 600; // 10 minutes
+var IDLE_GAP_THRESHOLD_SEC = 600;
 
 function parseEntryTimeMs(date, utcTime) {
   if (!utcTime) return null;
@@ -1460,7 +1303,7 @@ function computeIdleGaps(entries) {
 function renderIdleGaps() {
   var el = document.getElementById("idleGapsBody");
   if (!el) return;
-  var gaps = computeIdleGaps(state.entries).slice(0, 100); // cap so a bad period doesn't render an enormous table
+  var gaps = computeIdleGaps(state.entries).slice(0, 100);
   el.innerHTML = gaps.length===0 ? '<tr><td colspan="7" class="empty">No gaps found for this period</td></tr>' : gaps.map(function(g){
     return '<tr><td>'+esc(g.date)+'</td><td><span class="badge">'+esc(g.analyst)+'</span></td><td>'+esc(g.afterTask)+'</td><td>'+esc(g.beforeTask)+'</td><td>'+new Date(g.gapStartMs).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit",hour12:true})+'</td><td>'+new Date(g.gapEndMs).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit",hour12:true})+'</td><td style="text-align:right;font-weight:600">'+fmtDuration(g.gapSec)+'</td></tr>';
   }).join("");
@@ -1511,10 +1354,6 @@ function loadTeamData(){
   var start=document.getElementById("teamStartDate").value,end=document.getElementById("teamEndDate").value;
   if(!start||!end){toast("error","Please select a date range");return;}
   document.getElementById("teamContent").innerHTML='<div class="loading-center"><div class="spinner"></div></div>';
-  // Archived flag details (full analyst/message/reviewed_by/reviewed_at rows,
-  // not just the bare keys getReviewedFlags returns) are only needed for the
-  // admin-only Archived section, so skip the extra fetch entirely for
-  // non-admins.
   var calls = [ apiGet("getTeamData",{start:start,end:end}), apiGet("getReviewedFlags") ];
   if (isAdminUser()) calls.push(apiGet("getReviewedFlagDetails"));
   Promise.all(calls).then(function(results){
@@ -1545,18 +1384,6 @@ function renderSupervisorFilters(assignments){
 
 function setSupervisorFilter(email){state.selectedSupervisor=email;renderSupervisorFilters(state.teamData.assignments||[]);renderTeamContent(state.teamData);}
 
-// ============================================================
-// ROLE SUB-FILTER — lets a supervisor narrow Team Directory down to just
-// Analysts, just Senior Analysts, etc. Options are built dynamically from
-// whatever role values actually show up in team_assignments (Code.gs's
-// getTeamData -> assignments[].role), the same field already rendered as
-// the "PI Analyst" text under each analyst's name on their card — rather
-// than hardcoding "Analyst"/"Senior Analyst", so this keeps working if the
-// sheet ever has other role labels in it. Blank roles fall back to the
-// same "PI Analyst" default the card display already uses, so the filter
-// options line up exactly with what's shown on screen. Hidden entirely
-// when everyone shares one role (nothing meaningful to filter).
-// ============================================================
 function getEffectiveRole(a){ return (a.role && a.role.trim()) ? a.role.trim() : "PI Analyst"; }
 
 function renderRoleFilters(assignments){
@@ -1572,10 +1399,6 @@ function renderRoleFilters(assignments){
 
 function setRoleFilter(role){ state.selectedRole=role; renderRoleFilters(state.teamData.assignments||[]); renderTeamContent(state.teamData); }
 
-// Auto-surfaces analysts worth a second look: logged case-queue time on a
-// day but recorded zero cases that day, or an AHT well above the team
-// average for a platform. Min sample sizes keep this quiet on small/noisy
-// datasets rather than flagging things that are just statistical noise.
 function computeAttentionFlags(assignments, allEntries, allCases) {
   var flags = [];
   var validNames = {}; assignments.forEach(function(a){ validNames[a.analyst_name]=true; });
@@ -1600,13 +1423,13 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
 
   ["Kount","Zendesk","RADAR"].forEach(function(platform){
     var teamTimed = cases.filter(function(c){ return c.platform===platform && typeof c.handle_seconds==="number" && c.handle_seconds>0; });
-    if (teamTimed.length < 5) return; // not enough team data to judge
+    if (teamTimed.length < 5) return;
     var teamAvg = teamTimed.reduce(function(a,c){return a+c.handle_seconds;},0)/teamTimed.length;
     var byAnalyst = {};
     teamTimed.forEach(function(c){ (byAnalyst[c.analyst]=byAnalyst[c.analyst]||[]).push(c.handle_seconds); });
     Object.keys(byAnalyst).forEach(function(name){
       var arr = byAnalyst[name];
-      if (arr.length < 3) return; // not enough individual samples
+      if (arr.length < 3) return;
       var avg = arr.reduce(function(a,b){return a+b;},0)/arr.length;
       if (avg > teamAvg*1.5) {
         flags.push({ analyst:name, message:platform+" AHT ("+fmtSeconds(avg)+") is well above the team average ("+fmtSeconds(teamAvg)+")", key:"aht:"+name+":"+platform });
@@ -1620,18 +1443,11 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
 function renderAttentionBanner(assignments, entries, cases) {
   var el = document.getElementById("attentionBanner");
   if (!el) return;
-  // Stored so markAttentionReviewed can re-render with the same inputs
-  // after a flag is marked reviewed, without recomputing from scratch.
   state.lastAttentionArgs = { assignments: assignments, entries: entries, cases: cases };
   var flags = computeAttentionFlags(assignments, entries, cases).filter(function(f){ return !state.reviewedFlagKeys[f.key]; });
   state.attentionFlagsByKey = {};
   flags.forEach(function(f){ state.attentionFlagsByKey[f.key] = f; });
   if (!flags.length) { el.innerHTML = ""; return; }
-  // NOTE: the content div below uses the "attention-content" class (not an
-  // inline style) so the .open class toggle from toggleCollapsible() can
-  // actually control its display. An inline style="display:flex" here used
-  // to permanently override the collapsible CSS, which is why this section
-  // was stuck open before.
   el.innerHTML = '<div class="collapsible" style="border-left:4px solid hsl(45,90%,45%);margin-bottom:1.25rem">'
     + '<button class="collapsible-trigger open" onclick="toggleCollapsible(\'attention\')"><span>⚠️ Needs Attention ('+flags.length+')</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>'
     + '<div class="collapsible-content attention-content open" id="attentionContent">'
@@ -1647,10 +1463,6 @@ function renderAttentionBanner(assignments, entries, cases) {
     + '</div></div>';
 }
 
-// Marks a Needs Attention flag reviewed — persisted to the Sheet (shared
-// across everyone who opens the dashboard, not per-browser), then removes
-// it from the visible list. If it's the last remaining flag, the whole
-// section disappears, same as if nothing had ever been flagged.
 function markAttentionReviewed(key){
   var f = state.attentionFlagsByKey && state.attentionFlagsByKey[key];
   if (!f) return;
@@ -1665,14 +1477,6 @@ function markAttentionReviewed(key){
     .catch(function(err){ toast("error","Failed: "+err); });
 }
 
-// Read-only-by-default archive of every flag that's been marked reviewed
-// (state.archivedFlags, from getReviewedFlagDetails — full rows, not just
-// the bare keys getReviewedFlags returns). Admin-only, same gating as Needs
-// Attention. Collapsed by default since this list only grows over time.
-// Each row has a Restore button: since flags are computed fresh from
-// entries/cases rather than stored as their own records, "restoring" one
-// just means un-marking it reviewed — computeAttentionFlags() will surface
-// it again automatically as long as the underlying data still supports it.
 function renderArchivedBanner() {
   var el = document.getElementById("archivedBanner");
   if (!el) return;
@@ -1690,9 +1494,6 @@ function renderArchivedBanner() {
     + '</div></div>';
 }
 
-// Un-marks a flag as reviewed (deletes its row in attention_reviews) and
-// moves it back from Archived into Needs Attention, both re-rendered from
-// their existing cached inputs rather than a full reload.
 function restoreFlag(key){
   apiPost({action:"unmarkFlagReviewed", flagKey:key, callerEmail:state.user.email})
     .then(function(res){
@@ -1708,14 +1509,6 @@ function restoreFlag(key){
 }
 
 function renderTeamContent(data){
-  // Team Directory now shows everyone assigned to a team — including
-  // admins/supervisors — so a team made up entirely of admins (e.g. Kirby
-  // Stars) still shows up as its own bracket, and an admin who's also part
-  // of a working team (e.g. Bronte in Trust & Safety Intel) still appears
-  // there. This only controls visibility of the member card itself; it
-  // does NOT affect the separate exclusions on the main dashboard's "All
-  // Analysts" views (PI Cases / Analyst Logged Time), which still keep
-  // admins out of those aggregate numbers.
   var visibleAssignments=(data.assignments||[]).filter(function(a){
     if(!state.user.isSupervisor)return a.analyst_name===state.user.displayName;
     if(isHiddenAssignment(a))return false;
@@ -1723,13 +1516,6 @@ function renderTeamContent(data){
     if(state.selectedRole&&getEffectiveRole(a)!==state.selectedRole)return false;
     return true;
   });
-  // The Needs Attention banner is a different concern from visibility —
-  // it's a performance-flagging baseline, and an admin's meeting-heavy
-  // schedule or light case-queue presence would otherwise trip false
-  // positives unrelated to actual case work. Keep that baseline excluding
-  // privileged names, same as before.
-  // Needs Attention (and its Archived companion) are admin-view only —
-  // supervisors (non-admin) no longer see either section in Team Directory.
   if (isAdminUser()) {
     var attentionAssignments = visibleAssignments.filter(function(a){ return !state.privilegedNames[normName(a.analyst_name)]; });
     renderAttentionBanner(attentionAssignments, data.entries, data.cases);
@@ -1747,11 +1533,6 @@ function renderTeamContent(data){
   document.getElementById("teamContent").innerHTML=Object.values(groups).map(function(g){return '<div class="team-section"><div class="team-section-header"><span>'+esc(g.label)+'</span><span class="badge">'+g.members.length+' Analysts</span></div><div class="team-grid">'+g.members.map(function(m){return '<div class="analyst-card" onclick="viewAnalystDetail(\''+esc(m.name)+'\')"><h3>'+esc(m.name)+'</h3><p class="role">'+esc(m.role)+'</p><div class="analyst-meta"><div class="analyst-meta-row"><span>🕐</span><span class="lbl">Total:</span> <strong>'+fmtDurationShort(m.totalSecs)+'</strong></div><div class="analyst-meta-row"><span>📊</span><span class="lbl">Utilization:</span> <strong class="'+(m.util>=75?"util-good":"util-warn")+'">'+m.util+'%</strong></div><div class="analyst-meta-row"><span>🛡️</span><span class="lbl">Cases:</span> <strong>'+m.caseCount+'</strong></div><div class="analyst-meta-row"><span>⏱️</span><span class="lbl">AHT:</span> <strong>'+fmtSeconds(m.ahtSec)+'</strong></div>'+(m.lastEntry?'<div class="analyst-meta-row"><span>📅</span><span class="lbl">Last Entry:</span> <strong>'+m.lastEntry+'</strong></div>':'')+' </div></div>';}).join("")+'</div></div>';}).join("");
 }
 
-// Sorts each team group's members array in place according to
-// state.teamSortMode. AHT sorting treats null (no timed cases yet) as
-// "worst" so untimed analysts sink to the bottom of an ascending sort and
-// float to the top of a descending one — either way they don't silently
-// get lost mixed in with real numbers.
 function sortTeamMembers(groups){
   var mode = state.teamSortMode || "name";
   groups.forEach(function(g){
@@ -1769,14 +1550,9 @@ function sortTeamMembers(groups){
   });
 }
 
-// Maps a platform name to the Toggl task name it's logged under, so we can
-// compute "time spent in X" from time-tracker entries (mirrors PLATFORM_TASK_MAP
-// used server-side / by the extension for Toggl task naming).
 var PLATFORM_TASK_MAP = { Kount: "Rules Review", Zendesk: "Dispute Review", RADAR: "RADAR" };
 var PLATFORM_COLORS   = { Kount: "hsl(220,80%,55%)", Zendesk: "hsl(160,55%,40%)", RADAR: "hsl(45,90%,45%)" };
 
-// Works on whatever entries/cases set is currently loaded into the Quick View
-// (single analyst, or a multi-analyst export-filtered set) — not tied to one name.
 function platformBreakdown(entries, cases) {
   return ["Kount","Zendesk","RADAR"].map(function(platform){
     var taskName  = PLATFORM_TASK_MAP[platform];
@@ -1787,9 +1563,6 @@ function platformBreakdown(entries, cases) {
   });
 }
 
-// The Kount/Zendesk/RADAR tiles double as filters — clicking one narrows the
-// table below to just that platform (time entries by task name, cases by
-// platform); clicking the active one again clears back to "all".
 function toggleQuickViewPlatform(platform) {
   state.quickViewPlatform = (state.quickViewPlatform === platform) ? "all" : platform;
   renderQuickViewContent();
@@ -1876,10 +1649,6 @@ function getFilteredExportEntries(){
   return state.teamData.entries.filter(function(e){if(analyst!=="all"&&e.analyst!==analyst)return false;if(activity!=="all"&&e.task!==activity)return false;if(date&&e.date!==date)return false;if(state.selectedSupervisor){var members=(state.teamData.assignments||[]).filter(function(a){return a.supervisor_email===state.selectedSupervisor;}).map(function(a){return a.analyst_name;});if(!members.includes(e.analyst))return false;}return true;});
 }
 
-// Mirrors getFilteredExportEntries but for cases. Cases don't have a "task"
-// field, so the Activity dropdown only applies if the selected activity
-// happens to be one of the platform task names (Rules Review/Dispute
-// Review/RADAR) — otherwise no cases match that activity, same as entries.
 function getFilteredExportCases(){
   var analyst=document.getElementById("exportAnalyst").value,activity=document.getElementById("exportActivity").value,date=document.getElementById("exportDate").value;
   var cases = state.teamData.cases || [];
@@ -1962,12 +1731,6 @@ function saveUser(){
     .catch(function(err){toast("error",err);});
 }
 
-// ============================================================
-// AUTOMATED WEEKLY EMAIL DIGEST — admin-only recipient management. The
-// actual send is entirely server-side (a Saturday time-driven trigger
-// calling sendWeeklyDigest() in Code.gs); this UI only adds/removes rows
-// in the digest_recipients sheet that trigger reads from.
-// ============================================================
 function openDigestModal(){
   document.getElementById("digest_new_email").value = "";
   document.getElementById("digestModal").classList.add("open");
@@ -2022,23 +1785,13 @@ function removeDigestRecipientUI(email){
 
 function showView(view){
   ["dashboard","team","users"].forEach(function(v){document.getElementById("view-"+v).style.display=v===view?"block":"none";});
-  // teamDirBtn doubles as the way back — while on Team Directory it reads
-  // "Dashboard" instead of a separate "Back to Dashboard" button. Handled
-  // here (not just in the button's own click handler) so it stays correct
-  // no matter which path brought the user to/from this view (e.g. the
-  // Users view's own back button also goes through showView()).
   var teamBtn = document.getElementById("teamDirBtn");
   if (teamBtn) teamBtn.innerHTML = (view==="team") ? "🏠 Dashboard" : "👥 Team Directory";
 }
 function toggleCollapsible(id){var c=document.getElementById(id+"Content"),t=c?c.previousElementSibling:null;if(!c)return;c.classList.toggle("open");if(t)t.classList.toggle("open");}
 
 // ============================================================
-// THEME PALETTES — color-only presets, independent of the dark/light
-// toggle above (a palette class on <body> sets --primary/--accent/
-// --gradient/--gradient-btn; .dark separately sets --bg/--card/--border/
-// --text, so any palette works in either light or dark mode). Persisted
-// under its own localStorage key so it survives reloads the same way the
-// light/dark preference does.
+// THEME PALETTES
 // ============================================================
 var THEME_PRESETS = [
   { id:"fetch",  name:"Fetch (Default)" },
@@ -2048,11 +1801,6 @@ var THEME_PRESETS = [
   { id:"grape",  name:"Grape" },
   { id:"slate",  name:"Slate" }
 ];
-// Five-step bar-color ramps for each palette, used by the "Time by Task"
-// chart (renderChart()). Chart.js draws bars from literal color values —
-// it doesn't read CSS custom properties — so this can't just point at
-// var(--primary)/var(--accent); it needs its own set of concrete hues per
-// theme, hand-picked to sit near that theme's --primary/--accent hues.
 var THEME_CHART_COLORS = {
   fetch:  ["hsl(355,75%,60%)","hsl(340,70%,58%)","hsl(325,68%,56%)","hsl(310,65%,54%)","hsl(295,62%,52%)"],
   ocean:  ["hsl(205,80%,55%)","hsl(200,75%,52%)","hsl(195,72%,50%)","hsl(190,70%,50%)","hsl(185,68%,48%)"],
@@ -2070,11 +1818,6 @@ function applyThemePalette(id){
   document.body.classList.add("theme-"+id);
   if (localStorage) localStorage.setItem(THEME_PALETTE_KEY, id);
   renderThemeSwatches();
-  // Time by Task's bars are colored from THEME_CHART_COLORS[state.themeId]
-  // (Chart.js draws literal colors, it can't read CSS vars), so switching
-  // palette needs to re-render that chart immediately — unlike the case
-  // chart / platform badges, which use fixed colors on purpose and don't
-  // need this.
   if (state.taskChart) renderChart();
 }
 
