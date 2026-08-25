@@ -148,6 +148,8 @@ textarea{resize:vertical;min-height:80px;}
 .platform-filter-row{display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap;}
 .platform-filter-btn{padding:.4rem 1rem;border-radius:99px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:.82rem;cursor:pointer;font-weight:600;transition:all .2s;}
 .platform-filter-btn:hover:not(.active){background:var(--muted-bg);}
+.platform-filter-btn:disabled{opacity:.5;cursor:not-allowed;}
+.platform-filter-btn:disabled:hover{background:var(--card);}
 .platform-filter-btn.active{color:#fff;border-color:transparent;background:var(--gradient-btn);}
 .platform-filter-btn.active[data-platform="all"]{background:var(--gradient-btn);}
 .platform-filter-btn.active[data-platform="Kount"]{background:hsl(220,80%,55%);}
@@ -192,6 +194,16 @@ textarea{resize:vertical;min-height:80px;}
    just a second, more visible place to see/change it. */
 .case-stats-period-bar{display:flex;align-items:center;justify-content:center;gap:.6rem;flex-wrap:wrap;margin:0 0 .6rem;}
 .case-stats-period-bar .platform-filter-row{margin:0;justify-content:center;}
+/* CASES LOADING GLOW — pulsing border/shadow applied to the case tiles,
+   chart card, performance card, and case log while a period fetch is in
+   flight (see setCaseLoadingVisual() in the script). Uses var(--primary)
+   so the glow color follows whatever theme palette is active, same as
+   every other themed element on the page. */
+@keyframes casesLoadingPulse{
+  0%,100%{ box-shadow:0 0 0 0 transparent; }
+  50%{ box-shadow:0 0 0 3px var(--primary); }
+}
+.cases-loading-pulse{ animation:casesLoadingPulse 1.1s ease-in-out infinite; }
 </style>
 </head>
 <body>
@@ -552,7 +564,8 @@ var state = {
   timeLogCustomRange:{ active:false, start:null, end:null, entries:[] },
   overviewActivityFilter:"all", privilegedNames:{},
   reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null, archivedFlags:[],
-  taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, themeId:"fetch", usersList:[]
+  taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, themeId:"fetch", usersList:[],
+  casesLoading:false
 };
 
 // ============================================================
@@ -892,7 +905,13 @@ var CASE_PERIOD_CONTROL_CONTAINER_IDS = ["caseStatsGridPeriodControls", "casePer
 function renderCasePeriodControls() {
   var opts = [["today","Today"],["week","This Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
   var html = opts.map(function(o){
-    return '<button class="platform-filter-btn'+(state.casePeriodMode===o[0]?' active':'')+'" onclick="setCasePeriod(\''+o[0]+'\')">'+o[1]+'</button>';
+    // Disabled (not hidden) while a fetch is in flight — the buttons stay
+    // visible so it's clear a period IS selected, but clicking another one
+    // mid-request would just queue up a second overlapping fetch racing the
+    // first, so this blocks that rather than relying on people not to
+    // double-click while waiting.
+    var disabledAttr = state.casesLoading ? ' disabled' : '';
+    return '<button class="platform-filter-btn'+(state.casePeriodMode===o[0]?' active':'')+'"'+disabledAttr+' onclick="setCasePeriod(\''+o[0]+'\')">'+o[1]+'</button>';
   }).join("");
   CASE_PERIOD_CONTROL_CONTAINER_IDS.forEach(function(id){
     var el = document.getElementById(id);
@@ -938,18 +957,55 @@ function applyCasePeriodCustom() {
   fetchCasesForPeriod();
 }
 
+// Marks the case tiles/chart/table area as "refreshing" via a pulsing glow
+// border instead of wiping their content — the previous approach replaced
+// everything with a spinner, which meant every period switch flashed to
+// blank before repopulating, which is its own kind of jarring on fast
+// (cached) responses. Keeping the last-known numbers visible with a glow
+// around them communicates "this is updating" without the flash, and still
+// falls back to a spinner in the Detailed Case Log body specifically since
+// that one has nothing meaningful to show on a first-ever load.
+function setCaseLoadingVisual(loading) {
+  var targets = [];
+  document.querySelectorAll('#caseStatsGrid .stat-card').forEach(function(c){ targets.push(c); });
+  var chartCanvas = document.getElementById('caseChart');
+  if (chartCanvas) { var cc = chartCanvas.closest('.card'); if (cc) targets.push(cc); }
+  var perfTable = document.getElementById('caseAnalystTable');
+  if (perfTable) { var pc = perfTable.closest('.card'); if (pc) targets.push(pc); }
+  targets.forEach(function(t){ t.classList.toggle('cases-loading-pulse', loading); });
+
+  var logBody = document.getElementById('caseLogBody');
+  if (logBody && loading) logBody.closest('.table-wrap').classList.add('cases-loading-pulse');
+  else if (logBody) logBody.closest('.table-wrap').classList.remove('cases-loading-pulse');
+}
+
 function fetchCasesForPeriod() {
   var b = getCasePeriodBounds();
   var pb = getPriorCasePeriodBounds(b);
-  document.getElementById("casePeriodDesc").textContent = "Showing cases for " + casePeriodLabel();
-  Promise.all([
-    apiGet("getCaseEntries",{start:b.start,end:b.end}),
-    apiGet("getCaseEntries",{start:pb.start,end:pb.end})
-  ]).then(function(results){
-    state.allRangeCases=(results[0]&&!results[0].error)?results[0]:[];
-    state.allPriorRangeCases=(results[1]&&!results[1].error)?results[1]:[];
+  state.casesLoading = true;
+  renderCasePeriodControls(); // disables the period buttons for the duration of this fetch
+  document.getElementById("casePeriodDesc").textContent = "Loading cases for " + casePeriodLabel() + "…";
+  setCaseLoadingVisual(true);
+  // Single combined call (current + prior period in one Apps Script
+  // execution) instead of two separate apiGet calls — halves the number of
+  // network round trips / cold-start hits the dashboard pays per period
+  // switch. See getCaseEntriesWithPrior() in Code.gs.
+  apiGet("getCaseEntriesWithPrior",{start:b.start,end:b.end,priorStart:pb.start,priorEnd:pb.end}).then(function(result){
+    state.allRangeCases=(result&&!result.error&&result.current)?result.current:[];
+    state.allPriorRangeCases=(result&&!result.error&&result.prior)?result.prior:[];
+    document.getElementById("casePeriodDesc").textContent = "Showing cases for " + casePeriodLabel();
+    state.casesLoading = false;
+    renderCasePeriodControls();
+    setCaseLoadingVisual(false);
     applyCaseFilter();
-  }).catch(function(){ state.allRangeCases=[]; state.allPriorRangeCases=[]; applyCaseFilter(); });
+  }).catch(function(){
+    state.allRangeCases=[]; state.allPriorRangeCases=[];
+    document.getElementById("casePeriodDesc").textContent = "Showing cases for " + casePeriodLabel();
+    state.casesLoading = false;
+    renderCasePeriodControls();
+    setCaseLoadingVisual(false);
+    applyCaseFilter();
+  });
 }
 
 function filterCasesForCurrentScope(cases) {
