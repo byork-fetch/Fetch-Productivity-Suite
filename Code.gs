@@ -39,27 +39,54 @@ function isAdminRole(role) {
 // keyed with a version number so any write anywhere instantly
 // invalidates every cached read, rather than us trying to guess
 // which specific cache keys a given write affects.
+//
+// DOMAIN-SCOPED VERSIONING — previously this was ONE global version
+// counter, bumped by every single write anywhere in the app (a time entry
+// edit, a user role change, a digest recipient add, a flag review — ALL of
+// them). That meant the expensive Cases history cache (_getAllCasesRaw
+// below) was getting invalidated by writes that have nothing to do with
+// Cases, on top of being invalidated by every actual case sync — and with
+// ~20 analysts syncing cases continuously through the day plus routine
+// admin actions on top, the cache rarely survived long enough to avoid a
+// live full-sheet scan. Splitting into per-domain counters means a case
+// sync only invalidates case reads, a time-entry edit only invalidates
+// entry reads, and everything else (users/team_assignments/attention
+// reviews/digest recipients — all low-frequency) shares one counter so
+// those still cross-invalidate each other without touching the two
+// high-traffic domains.
 // ============================================================
-var CACHE_DEFAULT_TTL = 120; // seconds
+var CACHE_DEFAULT_TTL = 300; // seconds — was 120; safe to raise now that invalidation is domain-scoped instead of global
 
-function getCacheVersion() {
+function getCacheVersion(domain) {
   var props = PropertiesService.getScriptProperties();
-  return props.getProperty("cacheVersion") || "0";
+  return props.getProperty("cacheVersion_" + domain) || "0";
 }
 
-function bumpCacheVersion() {
+function bumpCacheVersion(domain) {
   var props = PropertiesService.getScriptProperties();
-  var v = parseInt(props.getProperty("cacheVersion") || "0", 10) + 1;
-  props.setProperty("cacheVersion", String(v));
+  var v = parseInt(props.getProperty("cacheVersion_" + domain) || "0", 10) + 1;
+  props.setProperty("cacheVersion_" + domain, String(v));
 }
 
-// Wraps an expensive computeFn() in a cached read. Falls back to
-// computing fresh if the cache is unavailable, empty, or the result
-// is too large to cache (Script Cache has a 100KB per-key limit) —
-// caching is a speed optimization here, never a hard dependency.
-function cachedCall(key, ttlSeconds, computeFn) {
+// Combines multiple domains' versions into one string, for reads (like Team
+// Directory) that depend on more than one domain — e.g. "entries" AND
+// "cases" — so a write to EITHER one correctly invalidates that read,
+// without tying it to unrelated domains too.
+function combinedCacheVersion(domains) {
+  return domains.map(getCacheVersion).join(".");
+}
+
+// Wraps an expensive computeFn() in a cached read. `domains` is an array of
+// cache domains this read depends on (see above) — its cache key is
+// versioned by ALL of them combined, so a write to any one correctly
+// invalidates it. Falls back to computing fresh if the cache is
+// unavailable, empty, or the result is too large to cache (Script Cache
+// has a 100KB per-key limit) — caching is a speed optimization here, never
+// a hard dependency.
+function cachedCall(key, ttlSeconds, computeFn, domains) {
+  domains = domains && domains.length ? domains : ["misc"];
   var cache = CacheService.getScriptCache();
-  var fullKey = key + ":v" + getCacheVersion();
+  var fullKey = key + ":v" + combinedCacheVersion(domains);
   try {
     var hit = cache.get(fullKey);
     if (hit) return JSON.parse(hit);
@@ -119,6 +146,15 @@ function doGet(e) {
       }
       if (action === "getCaseEntries") {
         return jsonResponse(getCaseEntries(params.start, params.end));
+      }
+      // Combined current+prior case fetch — see getCaseEntriesWithPrior()
+      // below. Introduced so the dashboard's period-switcher (Today/This
+      // Week/30/60/90/Custom) can do ONE round trip instead of two; the
+      // two _readAllCases() calls inside it already share the same
+      // in-execution _casesMemory, so this mainly saves the network/
+      // cold-start overhead of a second separate Apps Script execution.
+      if (action === "getCaseEntriesWithPrior") {
+        return jsonResponse(getCaseEntriesWithPrior(params.start, params.end, params.priorStart, params.priorEnd));
       }
       if (action === "getTeamData") {
         return jsonResponse(getTeamData(params.start, params.end));
@@ -192,7 +228,7 @@ function getUserByEmail(email) {
 // ============================================================
 function getTimeEntries(startDate, endDate) {
   try {
-    return cachedCall("entries:" + startDate + ":" + endDate, 120, function() {
+    return cachedCall("entries:" + startDate + ":" + endDate, 300, function() {
       var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
       var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
       if (!sheet || sheet.getLastRow() < 2) return [];
@@ -218,7 +254,7 @@ function getTimeEntries(startDate, endDate) {
       }
       if (skipped > 0) Logger.log("getTimeEntries: skipped " + skipped + " row(s) with unparseable dates for range " + startDate + " to " + endDate);
       return results;
-    });
+    }, ["entries"]);
   } catch(e) { return { error: e.toString() }; }
 }
 
@@ -237,7 +273,7 @@ function getAvailableMonths() {
         if (dateStr.length >= 7) months[dateStr.substring(0, 7)] = true;
       }
       return Object.keys(months).sort(function(a,b){ return b.localeCompare(a); });
-    });
+    }, ["entries"]);
   } catch(e) { return []; }
 }
 
@@ -259,23 +295,12 @@ function updateTimeEntryData(id, updates, callerEmail) {
     }
     if (rowIndex === -1) return { error: "Entry not found" };
     if (!isPrivileged(role) && entryAnalyst !== displayName) {
-      // Log this rather than failing silently — a mismatch here is usually
-      // "entryAnalyst" (as logged by the extension) not matching
-      // "users.display_name" exactly, which is otherwise invisible from the
-      // dashboard's point of view (it just shows "Permission denied").
       Logger.log("updateTimeEntryData permission denied — entry analyst='" + entryAnalyst + "', caller displayName='" + displayName + "', caller email=" + callerEmail);
       return { error: "Permission denied" };
     }
     var existingOriginal = data[rowIndex - 2][11];
     var originalDuration = data[rowIndex - 2][4];
 
-    // IMPORTANT: use explicit "was this actually provided" checks instead of
-    // `updates.x || fallback`. `||` treats a legitimate value of 0 (e.g. an
-    // edit that intentionally zeroes out a duration) or an emptied-out task
-    // name as "not provided," and silently falls back to the OLD value while
-    // still returning { success: true } — the dashboard shows "Entry
-    // updated!" even though nothing changed. That's the bug that was hiding
-    // behind reports of edits "not saving."
     var newTask = (updates.task !== undefined && updates.task !== null && updates.task !== "")
       ? updates.task : data[rowIndex - 2][3];
     var newDuration = (updates.duration !== undefined && updates.duration !== null && !isNaN(Number(updates.duration)))
@@ -288,16 +313,10 @@ function updateTimeEntryData(id, updates, callerEmail) {
     sheet.getRange(rowIndex, 10).setValue(updates.edit_reason || "");
     sheet.getRange(rowIndex, 11).setValue(new Date().toISOString());
 
-    // Only stamp original_duration the first time this row is edited. Guard
-    // against the same falsy-0 trap: if the row's true original duration was
-    // ever legitimately 0, "existingOriginal" reads back as 0 (falsy) forever,
-    // and every future edit would re-stamp original_duration with whatever
-    // the CURRENT (already-edited) duration is — permanently losing the real
-    // original and corrupting the "% Changed" column in Recently Edited.
     if (existingOriginal === "" || existingOriginal === null || existingOriginal === undefined) {
       sheet.getRange(rowIndex, 12).setValue(originalDuration);
     }
-    bumpCacheVersion();
+    bumpCacheVersion("entries");
     return { success: true };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -307,7 +326,11 @@ function updateTimeEntryData(id, updates, callerEmail) {
 // ============================================================
 function getTeamData(startDate, endDate) {
   try {
-    return cachedCall("team:" + startDate + ":" + endDate, 120, function() {
+    // Depends on both time_entries AND Cases (assignments come from
+    // team_assignments too, but that sheet has no write endpoint in this
+    // app — it's edited directly, so it isn't part of the versioned
+    // invalidation and just relies on this cache's TTL to pick up changes).
+    return cachedCall("team:" + startDate + ":" + endDate, 300, function() {
       var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
       var taSheet = ss.getSheetByName(SHEET_TEAM_ASSIGN);
       if (!taSheet || taSheet.getLastRow() < 2) return { assignments: [], entries: [], cases: [] };
@@ -322,7 +345,7 @@ function getTeamData(startDate, endDate) {
       entries = entries.filter(function(e){ return !!visibleAnalysts[e.analyst]; });
       var cases = _readAllCases(startDate, endDate).filter(function(c){ return !!visibleAnalysts[c.analyst]; });
       return { assignments: assignments, entries: entries, cases: cases };
-    });
+    }, ["entries", "cases"]);
   } catch(e) { return { error: e.toString() }; }
 }
 
@@ -342,7 +365,7 @@ function getAssignmentsList() {
       return assignData
         .filter(function(r){ return r[0]; })
         .map(function(r){ return { analyst_name: r[0].toString(), supervisor_email: r[1].toString(), team_name: r[2].toString(), role: r[3].toString() }; });
-    });
+    }, ["misc"]);
   } catch(e) { return []; }
 }
 
@@ -363,13 +386,13 @@ function getAssignmentsList() {
 // to keep the cached JSON smaller — then every _readAllCases() call just
 // filters that in-memory array by date, which is fast regardless of range.
 // _casesMemory covers reuse within a single execution (e.g. the digest's
-// six calls collapse into one Sheets read). CASES_CACHE_* below extends
-// that reuse across separate requests too, chunked because a single
-// Script Cache key caps at 100KB — case volume will exceed that within
-// days at current pace, so chunking meaningfully extends how much history
-// stays cache-served before falling back to a live read. bumpCacheVersion()
-// (already called on every case sync) invalidates this the same way it
-// invalidates every other cached read here.
+// six calls collapse into one Sheets read, and — as of this version — the
+// combined getCaseEntriesWithPrior()'s two calls collapse into one too).
+// CASES_CACHE_* below extends that reuse ACROSS separate requests, chunked
+// because a single Script Cache key caps at 100KB. bumpCacheVersion
+// ("cases") — now called ONLY by actual case writes (handleCaseRow), not
+// by every write in the app — invalidates this the same way it invalidates
+// every other cached read here, but far less often than before.
 // ============================================================
 var _casesMemory = null;
 var _casesMemoryVersion = null; // BUGFIX: _casesMemory previously had no version check, so if
@@ -381,12 +404,13 @@ var _casesMemoryVersion = null; // BUGFIX: _casesMemory previously had no versio
   // invalidates the CacheService copy below.
 var CASES_CACHE_CHUNK_SIZE = 90000; // chars/key, under CacheService's 100KB/key limit
 var CASES_CACHE_MAX_CHUNKS = 12;    // ~1MB cap — beyond this we just skip caching and read live
-var CASES_CACHE_TTL = 300; // was 120s — PI Cases (2 lookups per period switch: current + prior range)
-  // was expiring this cache twice as fast as getCaseTrends' own 300s aggregate cache, so PI Cases
-  // ended up doing more live Sheets reads than Case Trends despite being the more-used section.
+var CASES_CACHE_TTL = 900; // was 120s, then 300s — now that "cases" is its own cache domain
+  // (only bumped by actual case syncs, not by every write in the app — see the CACHING
+  // block up top), a longer TTL is safe: staleness is still bounded by real case writes,
+  // not by an unrelated time-entry edit or digest-recipient change blowing the cache away.
 
 function _getAllCasesRaw() {
-  var version = getCacheVersion();
+  var version = getCacheVersion("cases");
   if (_casesMemory && _casesMemoryVersion === version) return _casesMemory; // already read this execution, and still current
 
   var cache = CacheService.getScriptCache();
@@ -420,9 +444,6 @@ function _getAllCasesRaw() {
       var row = data[i];
       var dateStr = (row[0] instanceof Date) ? Utilities.formatDate(row[0], tz, "yyyy-MM-dd") : String(row[0] || "").substring(0, 10);
       if (!dateStr) continue;
-      // Compact array form [date, analyst, platform, case_id, source, handle_seconds, solved_at]
-      // instead of an object — meaningfully smaller JSON, which matters
-      // here since it's what determines how much history fits per chunk.
       results.push([dateStr, String(row[1]||""), String(row[2]||""), String(row[3]||""), String(row[4]||""), (typeof row[5]==="number"&&row[5]>0)?row[5]:null, String(row[7]||"")]);
     }
   }
@@ -468,6 +489,21 @@ function getCaseEntries(startDate, endDate) {
   } catch(e) { return { error: e.toString() }; }
 }
 
+// Combined current+prior fetch for the dashboard's case period switcher —
+// ONE Apps Script execution/round-trip instead of two. Both _readAllCases()
+// calls below hit the same _casesMemory (see _getAllCasesRaw above), so the
+// underlying Sheets read/cache lookup only happens once regardless; the
+// real win here is halving the network + Apps Script cold-start overhead
+// the dashboard was paying per period switch.
+function getCaseEntriesWithPrior(startDate, endDate, priorStart, priorEnd) {
+  try {
+    return {
+      current: _readAllCases(startDate, endDate),
+      prior:   _readAllCases(priorStart, priorEnd)
+    };
+  } catch(e) { return { error: e.toString() }; }
+}
+
 // ============================================================
 // USER MANAGEMENT
 // ============================================================
@@ -489,7 +525,7 @@ function upsertUserData(email, role, displayName, callerEmail) {
     var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
     var sheet = ss.getSheetByName(SHEET_USERS);
     upsertSheetRow(sheet, email, [email, role, displayName], 1);
-    bumpCacheVersion();
+    bumpCacheVersion("misc");
     return { success: true };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -539,7 +575,7 @@ function importCSVData(csvText, callerEmail) {
       existingIds[sheetRowId] = true; inserted++;
     }
     if (newRows.length > 0) sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 13).setValues(newRows);
-    if (inserted > 0) bumpCacheVersion();
+    if (inserted > 0) bumpCacheVersion("entries");
     return { success: true, inserted: inserted, skipped: skipped };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -583,7 +619,7 @@ function getReviewedFlagKeys() {
       return sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues()
         .map(function(r){ return String(r[0] || ""); })
         .filter(function(k){ return k; });
-    });
+    }, ["misc"]);
   } catch(e) { return []; }
 }
 
@@ -609,7 +645,7 @@ function getReviewedFlagDetails() {
             reviewed_at: String(r[4] || "")
           };
         });
-    });
+    }, ["misc"]);
   } catch(e) { return []; }
 }
 
@@ -622,8 +658,6 @@ function markFlagReviewed(flagKey, analyst, message, callerEmail) {
       sheet.appendRow(["flag_key","analyst","message","reviewed_by","reviewed_at"]);
       sheet.getRange(1,1,1,5).setFontWeight("bold"); sheet.setFrozenRows(1);
     }
-    // Dedupe — if this exact flag was already marked reviewed, don't add a
-    // second row for it.
     if (sheet.getLastRow() > 1) {
       var existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
       for (var i = 0; i < existing.length; i++) {
@@ -631,7 +665,7 @@ function markFlagReviewed(flagKey, analyst, message, callerEmail) {
       }
     }
     sheet.appendRow([flagKey, analyst || "", message || "", callerEmail || "", new Date().toISOString()]);
-    bumpCacheVersion();
+    bumpCacheVersion("misc");
     return { success: true };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -656,7 +690,7 @@ function unmarkFlagReviewed(flagKey, callerEmail) {
     for (var i = 0; i < keys.length; i++) {
       if (keys[i][0] === flagKey) {
         sheet.deleteRow(i + 2);
-        bumpCacheVersion();
+        bumpCacheVersion("misc");
         return { success: true };
       }
     }
@@ -693,7 +727,7 @@ function getDigestRecipients(callerEmail) {
       return sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues()
         .filter(function(r){ return r[0]; })
         .map(function(r){ return { email:String(r[0]||""), added_by:String(r[1]||""), added_at:String(r[2]||"") }; });
-    });
+    }, ["misc"]);
   } catch(e) { return { error: e.toString() }; }
 }
 
@@ -717,7 +751,7 @@ function addDigestRecipient(email, callerEmail) {
     }
     sheet.appendRow([email, callerEmail || "", new Date().toISOString()]);
     ensureDigestTriggerExists();
-    bumpCacheVersion();
+    bumpCacheVersion("misc");
     return { success: true };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -733,7 +767,7 @@ function removeDigestRecipient(email, callerEmail) {
     for (var i = 0; i < rows.length; i++) {
       if (String(rows[i][0]||"").toLowerCase() === email) {
         sheet.deleteRow(i + 2);
-        bumpCacheVersion();
+        bumpCacheVersion("misc");
         return { success: true };
       }
     }
@@ -886,7 +920,7 @@ function getCaseTrends(weeksBack, analystFilter) {
           avgAhtMin: ahtSecs.length ? Math.round(ahtSecs.reduce(function(a,b){return a+b;},0)/ahtSecs.length/60*10)/10 : null
         };
       });
-    });
+    }, ["cases"]);
   } catch(e) { return { error: e.toString() }; }
 }
 
@@ -1212,7 +1246,7 @@ function doPost(e) {
       }
     }
     sheet.appendRow([maxId, payload.analyst, payload.project||"Fetch Rewards", payload.task, Number(payload.duration), payload.date, payload.category||"Work", payload.start_time||null, payload.end_time||null, null, null, null, sheetRowId]);
-    bumpCacheVersion();
+    bumpCacheVersion("entries");
     return jsonResponse({ success: true, id: maxId });
   } catch(err) { return jsonResponse({ error: err.toString() }); }
 }
@@ -1239,7 +1273,7 @@ function handleCaseRow(payload) {
     var hs = (payload.handle_seconds===null||payload.handle_seconds===undefined)?'':payload.handle_seconds;
     var hm = hs===''?'':Math.round((hs/60)*100)/100;
     sheet.appendRow([payload.date||'', payload.analyst||'', payload.platform||'', payload.case_id||'', payload.source||'', hs, hm, payload.solved_at||'', dedupeKey]);
-    bumpCacheVersion();
+    bumpCacheVersion("cases");
     return jsonResponse({ success: true });
   } catch(err) { return jsonResponse({ error: err.toString() }); }
 }
