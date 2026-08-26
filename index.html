@@ -17,8 +17,15 @@
   --radius:0.75rem;
   --shadow-soft:0 4px 16px -2px hsl(355,75%,60%,0.15);
   --shadow-med:0 8px 24px -4px hsl(355,75%,60%,0.2);
+  /* Card-at-rest shadow — light mode's card bg (#fff) sits only ~2%
+     lightness above the page bg (98%), which reads as flat/melted-in
+     without real elevation. Dark mode intentionally sets this to none
+     below: a black shadow against an already-dark background just looks
+     muddy rather than lifted, and dark mode's cards already separate fine
+     via the card/bg lightness gap plus the colored left border. */
+  --card-rest-shadow:0 1px 3px rgba(0,0,0,.09), 0 4px 14px rgba(0,0,0,.06);
 }
-.dark{--bg:hsl(0,0%,10%);--card:hsl(0,0%,14%);--border:hsl(0,0%,20%);--text:hsl(0,0%,95%);--text-muted:hsl(0,0%,60%);--muted-bg:hsl(0,0%,18%);}
+.dark{--bg:hsl(0,0%,10%);--card:hsl(0,0%,14%);--border:hsl(0,0%,20%);--text:hsl(0,0%,95%);--text-muted:hsl(0,0%,60%);--muted-bg:hsl(0,0%,18%);--card-rest-shadow:none;}
 .theme-fetch{--primary:hsl(355,75%,60%);--accent:hsl(330,65%,55%);--gradient:linear-gradient(135deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--gradient-btn:linear-gradient(90deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--shadow-soft:0 4px 16px -2px hsl(355,75%,60%,0.15);--shadow-med:0 8px 24px -4px hsl(355,75%,60%,0.2);}
 .theme-ocean{--primary:hsl(205,80%,55%);--accent:hsl(190,70%,50%);--gradient:linear-gradient(135deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);--gradient-btn:linear-gradient(90deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);--shadow-soft:0 4px 16px -2px hsl(205,80%,55%,0.15);--shadow-med:0 8px 24px -4px hsl(205,80%,55%,0.2);}
 .theme-forest{--primary:hsl(150,55%,38%);--accent:hsl(90,45%,45%);--gradient:linear-gradient(135deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);--gradient-btn:linear-gradient(90deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);--shadow-soft:0 4px 16px -2px hsl(150,55%,38%,0.15);--shadow-med:0 8px 24px -4px hsl(150,55%,38%,0.2);}
@@ -70,7 +77,7 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem;}
 .stats-grid-centered{display:flex;flex-wrap:wrap;justify-content:center;gap:1rem;margin-bottom:1.5rem;}
 .stats-grid-centered .stat-card{flex:0 1 200px;min-width:180px;}
-.stat-card{background:var(--card);border:1px solid var(--border);border-left:4px solid var(--primary);border-radius:var(--radius);padding:1.25rem;transition:box-shadow .3s,transform .3s;}
+.stat-card{background:var(--card);border:1px solid var(--border);border-left:4px solid var(--primary);border-radius:var(--radius);padding:1.25rem;transition:box-shadow .3s,transform .3s;box-shadow:var(--card-rest-shadow);}
 .stat-card:hover{box-shadow:var(--shadow-soft);transform:scale(1.02);}
 .stat-card.case-card{border-left-color:hsl(220,80%,55%);}
 .stat-label{font-size:.8rem;color:var(--text-muted);font-weight:500;margin-bottom:.3rem;}
@@ -85,7 +92,7 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .cases-grid>.card{display:flex;flex-direction:column;}
 .cases-grid>.card .card-body{flex:1;display:flex;flex-direction:column;min-height:0;}
 .cases-grid>.card .analyst-table{flex:1;min-height:0;}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--card-rest-shadow);}
 .card-header{padding:1.25rem 1.5rem .75rem;border-bottom:1px solid var(--border);}
 .card-header h2{font-size:1rem;font-weight:600;}
 .card-body{padding:1.25rem 1.5rem;}
