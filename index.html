@@ -62,9 +62,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .btn-sm{padding:.3rem .7rem;font-size:.8rem;}.btn:disabled{opacity:.5;cursor:not-allowed;}
 #themeToggle{width:2.2rem;height:2.2rem;border-radius:.5rem;padding:0;justify-content:center;font-size:1.1rem;}
 select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;background:var(--card);color:var(--text);font-size:.85rem;cursor:pointer;}
-.select-ghost{background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.3);}
-.select-ghost option{background:var(--primary);color:#fff;}
 .greeting-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1.5rem;text-align:center;font-size:1.1rem;font-weight:600;}
+.header-greeting{color:rgba(255,255,255,.9);font-size:.95rem;font-weight:500;margin-top:.6rem;}
+.filter-bar-card .header-filters{margin-top:0;margin-bottom:.75rem;}
+.filter-bar-card .header-filters select{flex:1 1 180px;min-width:160px;}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem;}
 .stats-grid-centered{display:flex;flex-wrap:wrap;justify-content:center;gap:1rem;margin-bottom:1.5rem;}
 .stats-grid-centered .stat-card{flex:0 1 200px;min-width:180px;}
@@ -184,21 +185,11 @@ textarea{resize:vertical;min-height:80px;}
 .toast.success{background:hsl(142,60%,40%);}.toast.error{background:hsl(0,70%,50%);}.toast.info{background:hsl(355,75%,55%);}
 @keyframes slideIn{from{opacity:0;transform:translateX(20px);}to{opacity:1;transform:none;}}
 ::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
-/* CASE STATS PERIOD BAR — compact period control shown directly above the
-   top "Cases / Kount AHT / Zendesk AHT / RADAR AHT" quick-view tiles, so
-   the period that's actually driving those four numbers is visible and
-   changeable right there, instead of only reachable by scrolling down to
-   the "PI Cases" section header. Renders the exact same buttons as
-   #casePeriodControls (see renderCasePeriodControls() in the script below,
-   which now targets both containers) — it's the same state.casePeriodMode,
-   just a second, more visible place to see/change it. */
-.case-stats-period-bar{display:flex;align-items:center;justify-content:center;gap:.6rem;flex-wrap:wrap;margin:0 0 .6rem;}
-.case-stats-period-bar .platform-filter-row{margin:0;justify-content:center;}
-/* CASES LOADING GLOW — pulsing border/shadow applied to the case tiles,
-   chart card, performance card, and case log while a period fetch is in
-   flight (see setCaseLoadingVisual() in the script). Uses var(--primary)
-   so the glow color follows whatever theme palette is active, same as
-   every other themed element on the page. */
+/* LOADING GLOW — pulsing border/shadow applied to the stat tiles, chart
+   cards, performance card, and case log while a period fetch is in flight
+   (see setDashboardLoadingVisual() in the script). Uses var(--primary) so
+   the glow color follows whatever theme palette is active, same as every
+   other themed element on the page. */
 @keyframes casesLoadingPulse{
   0%,100%{ box-shadow:0 0 0 0 transparent; }
   50%{ box-shadow:0 0 0 3px var(--primary); }
@@ -237,48 +228,47 @@ textarea{resize:vertical;min-height:80px;}
           <button id="signOutBtn" class="btn btn-ghost">👤 Sign Out</button>
         </div>
       </div>
-      <div class="header-filters" id="headerFilters" style="display:none">
-        <select id="analystFilter" class="select-ghost"><option value="all">All Analysts</option></select>
-        <select id="teamFilterHeader" class="select-ghost"><option value="all">All Teams</option></select>
-        <select id="roleFilterHeader" class="select-ghost"><option value="all">All Roles</option></select>
-      </div>
+      <p class="header-greeting" id="headerGreeting"></p>
     </header>
 
     <div id="view-dashboard">
-      <div class="greeting-card" id="greeting"></div>
+      <div class="card filter-bar-card" style="margin-bottom:1.5rem">
+        <div class="card-body">
+          <div class="header-filters" id="headerFilters" style="display:none">
+            <select id="analystFilter" class="form-select"><option value="all">All Analysts</option></select>
+            <select id="teamFilterHeader" class="form-select"><option value="all">All Teams</option></select>
+            <select id="roleFilterHeader" class="form-select"><option value="all">All Roles</option></select>
+          </div>
+          <div class="platform-filter-row" id="periodControls" style="margin:0 0 .75rem"></div>
+          <div class="date-range-row" id="periodCustomRow" style="display:none;margin-bottom:.75rem">
+            <label>Custom range:</label>
+            <input type="date" id="periodCustomStart" class="date-input"/>
+            <span style="color:var(--text-muted)">to</span>
+            <input type="date" id="periodCustomEnd" class="date-input"/>
+            <button class="btn btn-primary btn-sm" onclick="applyPeriodCustom()">Apply</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+            <select id="monthQuickJump" class="form-select" style="width:auto"><option value="">Jump to month…</option></select>
+            <select id="overviewActivityFilter" class="form-select" style="width:auto"><option value="all">All Activities</option></select>
+          </div>
+          <p id="periodDesc" style="font-size:.8rem;color:var(--text-muted);margin:.6rem 0 0"></p>
+        </div>
+      </div>
       <div class="stats-grid" id="statsGrid"></div>
-      <div class="case-stats-period-bar" id="caseStatsGridPeriodControls"></div>
       <div class="stats-grid-centered" id="caseStatsGrid"></div>
       <div class="main-grid">
         <div class="left-col">
-          <div class="card" style="margin-bottom:1.25rem">
-            <div class="card-body">
-              <div class="period-row"><h3>Reporting Period</h3><select id="monthSelect"><option value="">Loading…</option></select></div>
-              <div class="form-group" style="margin-top:1rem;max-width:280px"><label>Activity</label><select id="overviewActivityFilter" class="form-select"><option value="all">All Activities</option></select></div>
-            </div>
-          </div>
-          <div class="card" style="margin-bottom:1.25rem">
+          <div class="card">
             <div class="card-header"><h2>Time by Task</h2></div>
             <div class="card-body chart-wrap chart-wrap-scroll"><canvas id="taskChart"></canvas><div id="taskChartEmpty" class="empty" style="display:none">No data for this period</div></div>
           </div>
         </div>
         <div class="card">
-          <div class="card-header"><h2>Analyst Logged Time</h2><p id="periodDesc" style="font-size:.8rem;color:var(--text-muted);margin-top:.2rem"></p></div>
-          <div class="card-body"><div class="analyst-table" id="analystTable"><div class="empty">Select a reporting period</div></div></div>
+          <div class="card-header"><h2>Analyst Logged Time</h2></div>
+          <div class="card-body"><div class="analyst-table" id="analystTable"><div class="empty">Loading…</div></div></div>
         </div>
       </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:.4rem">
-        <h2 class="section-heading" style="margin:0">🛡️ PI Cases</h2>
-        <div class="platform-filter-row" id="casePeriodControls" style="margin:0"></div>
-      </div>
-      <div class="date-range-row" id="casePeriodCustomRow" style="display:none">
-        <label>Custom range:</label>
-        <input type="date" id="casePeriodStart" class="date-input"/>
-        <span style="color:var(--text-muted)">to</span>
-        <input type="date" id="casePeriodEnd" class="date-input"/>
-        <button class="btn btn-primary btn-sm" onclick="applyCasePeriodCustom()">Apply</button>
-      </div>
-      <p id="casePeriodDesc" style="font-size:.8rem;color:var(--text-muted);margin:-0.5rem 0 1rem"></p>
+      <h2 class="section-heading">🛡️ PI Cases</h2>
       <div class="main-grid cases-grid">
         <div class="left-col">
           <div class="card"><div class="card-header"><h2>Cases by Platform</h2></div><div class="card-body chart-wrap"><canvas id="caseChart"></canvas><div id="caseChartEmpty" class="empty" style="display:none">No cases for this period</div></div></div>
@@ -298,14 +288,6 @@ textarea{resize:vertical;min-height:80px;}
       <div class="collapsible">
         <button class="collapsible-trigger" onclick="toggleCollapsible('timeLog')"><span>Detailed Time Log</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
         <div class="collapsible-content" id="timeLogContent">
-          <div class="date-range-row" style="margin-bottom:1rem">
-            <label>Custom range (overrides Reporting Period below):</label>
-            <input type="date" id="timeLogCustomStart" class="date-input"/>
-            <span style="color:var(--text-muted)">to</span>
-            <input type="date" id="timeLogCustomEnd" class="date-input"/>
-            <button class="btn btn-primary btn-sm" onclick="applyTimeLogCustomRange()">Apply</button>
-            <button class="btn btn-outline btn-sm" id="timeLogCustomClearBtn" style="display:none" onclick="clearTimeLogCustomRange()">✕ Clear</button>
-          </div>
           <div class="export-filters-grid" style="margin-bottom:1rem">
             <div class="form-group"><label>Analyst</label><select id="timeLogAnalystFilter" class="form-select"><option value="all">All Analysts</option></select></div>
             <div class="form-group"><label>Activity / Status</label><select id="timeLogActivityFilter" class="form-select"><option value="all">All Activities</option></select></div>
@@ -552,20 +534,26 @@ function showLoginError(msg) { var el=document.getElementById("loginError"); el.
 // STATE
 // ============================================================
 var state = {
-  user:null, entries:[], allMonthEntries:[], allRangeCases:[], cases:[],
-  selectedMonth:"", selectedAnalyst:"all", sortField:"date", sortDir:"desc",
+  user:null, entries:[], allRangeEntries:[], allRangeCases:[], allPriorRangeCases:[], cases:[],
+  selectedAnalyst:"all", sortField:"date", sortDir:"desc",
   caseSortField:"date", caseSortDir:"desc", editEntry:null,
-  casePlatformFilter:"all", caseSourceFilter:"all", casePeriodMode:"week", casePeriodStart:null, casePeriodEnd:null,
+  casePlatformFilter:"all", caseSourceFilter:"all",
+  // UNIFIED PERIOD — one control (Today/Yesterday/This Week/30/60/90/Custom)
+  // now drives everything on the Dashboard view: the top stat tiles, case
+  // tiles, Time by Task, Analyst Logged Time, Detailed Time Log, and
+  // Detailed Case Log. Replaces the old split between a Reporting Period
+  // month selector (time entries) and a separate case-period control
+  // (cases) — those used to drift independently, which is what made
+  // "why doesn't Time by Task match the case tiles" a real question.
+  periodMode:"week", periodCustomStart:null, periodCustomEnd:null, periodLoading:false,
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null, selectedRole:null, teamSortMode:"name",
   assignments:[], analystTeamMap:{}, analystRoleMap:{}, hiddenAssignmentNames:{},
   dashboardTeamFilter:"all", dashboardRoleFilter:"all",
   quickViewAnalyst:null, quickViewMode:"time", quickViewPlatform:"all", quickViewEntries:[], quickViewCases:[],
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
-  timeLogCustomRange:{ active:false, start:null, end:null, entries:[] },
   overviewActivityFilter:"all", privilegedNames:{},
   reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null, archivedFlags:[],
-  taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, themeId:"fetch", usersList:[],
-  casesLoading:false
+  taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, themeId:"fetch", usersList:[]
 };
 
 // ============================================================
@@ -578,9 +566,9 @@ function loadFilterPrefs(){
     var raw = localStorage.getItem(FILTER_PREFS_KEY);
     if (!raw) return;
     var p = JSON.parse(raw);
-    if (p.casePeriodMode && ["today","week","30d","60d","90d","custom"].indexOf(p.casePeriodMode)!==-1) state.casePeriodMode = p.casePeriodMode;
-    if (p.casePeriodStart) state.casePeriodStart = p.casePeriodStart;
-    if (p.casePeriodEnd) state.casePeriodEnd = p.casePeriodEnd;
+    if (p.periodMode && ["today","yesterday","week","30d","60d","90d","custom"].indexOf(p.periodMode)!==-1) state.periodMode = p.periodMode;
+    if (p.periodCustomStart) state.periodCustomStart = p.periodCustomStart;
+    if (p.periodCustomEnd) state.periodCustomEnd = p.periodCustomEnd;
     if (p.casePlatformFilter) state.casePlatformFilter = p.casePlatformFilter;
     if (p.caseSourceFilter) state.caseSourceFilter = p.caseSourceFilter;
     if (p.caseSearchQuery) state.caseSearchQuery = p.caseSearchQuery;
@@ -596,9 +584,9 @@ function loadFilterPrefs(){
 function persistFilterPrefs(){
   try {
     localStorage.setItem(FILTER_PREFS_KEY, JSON.stringify({
-      casePeriodMode: state.casePeriodMode,
-      casePeriodStart: state.casePeriodStart,
-      casePeriodEnd: state.casePeriodEnd,
+      periodMode: state.periodMode,
+      periodCustomStart: state.periodCustomStart,
+      periodCustomEnd: state.periodCustomEnd,
       casePlatformFilter: state.casePlatformFilter,
       caseSourceFilter: state.caseSourceFilter,
       caseSearchQuery: state.caseSearchQuery,
@@ -745,7 +733,7 @@ function bootWithUser(user) {
   document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
   document.getElementById("teamFilterHeader").addEventListener("change", function(){ state.dashboardTeamFilter=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
   document.getElementById("roleFilterHeader").addEventListener("change", function(){ state.dashboardRoleFilter=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
-  document.getElementById("monthSelect").addEventListener("change", function(){ state.selectedMonth=this.value; fetchEntries(); });
+  document.getElementById("monthQuickJump").addEventListener("change", function(){ setPeriodFromMonthJump(this.value); });
   document.getElementById("timeLogAnalystFilter").addEventListener("change", function(){ state.timeLogAnalystFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
   document.getElementById("timeLogActivityFilter").addEventListener("change", function(){ state.timeLogActivityFilter=this.value; persistFilterPrefs(); renderTimeLog(); });
   document.getElementById("overviewActivityFilter").addEventListener("change", function(){ state.overviewActivityFilter=this.value; persistFilterPrefs(); renderAnalystTable(); renderChart(); });
@@ -760,9 +748,9 @@ function bootWithUser(user) {
   });
   loadPrivilegedNames().then(function(){
     loadMonths();
-    renderCasePeriodControls();
+    renderPeriodControls();
     renderCasePlatformFilterRow();
-    fetchCasesForPeriod();
+    fetchDashboardData();
     setupCSVDrop();
   });
   loadTeamRoleContext().then(function(){
@@ -781,89 +769,182 @@ function setGreeting() {
   var name=state.user.displayName||"there";
   var msgs=["Good "+tod+", "+name+", let's take a quick look at your activity.","Hi "+name+"! Time to check in on today's activity.","Good "+tod+", "+name+", ready for a quick activity check?","Good "+tod+", "+name+", let's see how your time is adding up.","Hey "+name+"! Let's check your activity and keep things moving."];
   var d=new Date(), seed=d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();
-  var roleColors={"admin":"background:var(--gradient-btn);color:#fff","supervisor":"background:hsl(220,80%,55%);color:#fff","senior analyst":"background:hsl(270,60%,55%);color:#fff","analyst":"background:hsl(160,55%,40%);color:#fff"};
-  var rk=(state.user.role||"").toLowerCase().trim();
-  var rd={"admin":"Admin","supervisor":"Supervisor","senior analyst":"Senior Analyst","analyst":"Analyst"}[rk]||state.user.role;
-  var rs=roleColors[rk]||"background:var(--muted-bg);color:var(--text)";
-  document.getElementById("greeting").innerHTML=esc(msgs[seed%msgs.length])+'<span style="margin-left:.6rem;padding:.15rem .55rem;border-radius:99px;font-size:.75rem;font-weight:700;'+rs+';vertical-align:middle">'+esc(rd)+'</span>';
-}
-
-function loadMonths() {
-  var cur = formatMonthKey(new Date());
-  state.selectedMonth = cur;
-  var sel = document.getElementById("monthSelect");
-  sel.innerHTML = '<option value="'+cur+'">'+formatMonthLabel(cur)+'</option>';
-  fetchEntries();
-
-  apiGet("getAvailableMonths").then(function(months) {
-    if (!months||months.error||months.length===0) return;
-    sel.innerHTML = "";
-    months.forEach(function(m){ var o=document.createElement("option"); o.value=m; o.textContent=formatMonthLabel(m); sel.appendChild(o); });
-    if (months.indexOf(cur) === -1) {
-      state.selectedMonth = months[0]; sel.value = months[0];
-      fetchEntries();
-    } else {
-      sel.value = cur;
-    }
-  }).catch(function(err){ toast("error","Failed to load months: "+err); });
-}
-
-function formatMonthKey(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
-function formatMonthLabel(key){ var p=key.split("-"); return new Date(parseInt(p[0]),parseInt(p[1])-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"}); }
-
-function fetchEntries() {
-  if (!state.selectedMonth) return;
-  var p=state.selectedMonth.split("-"), year=parseInt(p[0]), month=parseInt(p[1]);
-  var start=new Date(year,month-1,1), end=new Date(year,month,0);
-  var s=formatDate(start), e=formatDate(end);
-  document.getElementById("timeLogBody").innerHTML='<tr><td colspan="7" class="empty"><div class="spinner" style="margin:auto"></div></td></tr>';
-  apiGet("getTimeEntries",{start:s,end:e}).then(function(data){
-    if (data&&data.error){toast("error","Fetch error: "+data.error);return;}
-    state.allMonthEntries=data||[]; updateAnalystFilterOptions(); applyAnalystFilter(); updatePeriodDesc(s,e);
-  }).catch(function(err){toast("error","Failed: "+err);});
+  document.getElementById("headerGreeting").textContent=msgs[seed%msgs.length];
 }
 
 // ============================================================
-// DETAILED TIME LOG — CUSTOM RANGE
+// UNIFIED PERIOD CONTROL — Today/Yesterday/This Week/30/60/90/Custom,
+// plus a "jump to month" shortcut. Replaces the old split between a
+// Reporting Period month selector (drove Time by Task/Analyst Logged
+// Time/Detailed Time Log) and a separate case-period control (drove the
+// case tiles/Cases by Platform/Case Performance/Detailed Case Log) — those
+// used to be two independent clocks that could show different windows at
+// the same time. Now one control drives the whole Dashboard view.
 // ============================================================
-function applyTimeLogCustomRange() {
-  var s = document.getElementById("timeLogCustomStart").value, e = document.getElementById("timeLogCustomEnd").value;
-  if (!s || !e) { toast("error","Please select both start and end dates"); return; }
-  if (s > e) { toast("error","Start date must be before end date"); return; }
-  document.getElementById("timeLogBody").innerHTML='<tr><td colspan="7" class="empty"><div class="spinner" style="margin:auto"></div></td></tr>';
-  apiGet("getTimeEntries",{start:s,end:e}).then(function(data){
-    if (data && data.error) { toast("error","Fetch error: "+data.error); return; }
-    state.timeLogCustomRange = { active:true, start:s, end:e, entries: data||[] };
-    document.getElementById("timeLogCustomClearBtn").style.display = "inline-flex";
-    updateTimeLogFilterOptions();
-    renderTimeLog();
-    toast("success","Showing "+s+" – "+e);
-  }).catch(function(err){ toast("error","Failed: "+err); });
-}
-
-function clearTimeLogCustomRange() {
-  state.timeLogCustomRange = { active:false, start:null, end:null, entries:[] };
-  document.getElementById("timeLogCustomStart").value = "";
-  document.getElementById("timeLogCustomEnd").value = "";
-  document.getElementById("timeLogCustomClearBtn").style.display = "none";
-  updateTimeLogFilterOptions();
-  renderTimeLog();
-}
-
-// ============================================================
-// CASE PERIOD — decoupled from the Reporting Period month selector.
-// ============================================================
-function getCasePeriodBounds() {
+function getPeriodBounds() {
   var now = new Date();
-  if (state.casePeriodMode === "today") { var d=formatDate(now); return { start:d, end:d }; }
-  if (state.casePeriodMode === "week")  { return { start:formatDate(getWeekStart(now)), end:formatDate(getWeekEnd(now)) }; }
-  if (state.casePeriodMode === "30d") { return { start:formatDate(new Date(now.getTime()-29*86400000)), end:formatDate(now) }; }
-  if (state.casePeriodMode === "60d") { return { start:formatDate(new Date(now.getTime()-59*86400000)), end:formatDate(now) }; }
-  if (state.casePeriodMode === "90d") { return { start:formatDate(new Date(now.getTime()-89*86400000)), end:formatDate(now) }; }
-  var s = state.casePeriodStart || formatDate(now), e = state.casePeriodEnd || formatDate(now);
+  if (state.periodMode === "today")     { var d=formatDate(now); return { start:d, end:d }; }
+  if (state.periodMode === "yesterday") { var y=new Date(now.getTime()-86400000); var d=formatDate(y); return { start:d, end:d }; }
+  if (state.periodMode === "week")      { return { start:formatDate(getWeekStart(now)), end:formatDate(getWeekEnd(now)) }; }
+  if (state.periodMode === "30d") { return { start:formatDate(new Date(now.getTime()-29*86400000)), end:formatDate(now) }; }
+  if (state.periodMode === "60d") { return { start:formatDate(new Date(now.getTime()-59*86400000)), end:formatDate(now) }; }
+  if (state.periodMode === "90d") { return { start:formatDate(new Date(now.getTime()-89*86400000)), end:formatDate(now) }; }
+  // custom
+  var s = state.periodCustomStart || formatDate(now), e = state.periodCustomEnd || formatDate(now);
   return { start:s, end:e };
 }
 
+function periodLabel() {
+  var b = getPeriodBounds();
+  var rangeStr = formatDateRangeDisplay(b.start, b.end);
+  if (state.periodMode === "today")     return "Today · " + rangeStr;
+  if (state.periodMode === "yesterday") return "Yesterday · " + rangeStr;
+  if (state.periodMode === "week")      return "This Week · " + rangeStr;
+  if (state.periodMode === "30d")       return "Last 30 Days · " + rangeStr;
+  if (state.periodMode === "60d")       return "Last 60 Days · " + rangeStr;
+  if (state.periodMode === "90d")       return "Last 90 Days · " + rangeStr;
+  return rangeStr; // custom — just the range itself
+}
+
+// The immediately-preceding period of the same length, used for the
+// period-over-period delta indicators on the case stat cards.
+function getPriorPeriodBounds(bounds) {
+  var start = new Date(bounds.start+"T00:00:00"), end = new Date(bounds.end+"T00:00:00");
+  var dayCount = Math.round((end.getTime()-start.getTime())/86400000) + 1;
+  var priorEnd = new Date(start.getTime() - 86400000);
+  var priorStart = new Date(priorEnd.getTime() - (dayCount-1)*86400000);
+  return { start: formatDate(priorStart), end: formatDate(priorEnd) };
+}
+
+function renderPeriodControls() {
+  var opts = [["today","Today"],["yesterday","Yesterday"],["week","This Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
+  var html = opts.map(function(o){
+    var disabledAttr = state.periodLoading ? ' disabled' : '';
+    return '<button class="platform-filter-btn'+(state.periodMode===o[0]?' active':'')+'"'+disabledAttr+' onclick="setPeriod(\''+o[0]+'\')">'+o[1]+'</button>';
+  }).join("");
+  var el = document.getElementById("periodControls");
+  if (el) el.innerHTML = html;
+  var customRow = document.getElementById("periodCustomRow");
+  if (customRow) customRow.style.display = state.periodMode === "custom" ? "flex" : "none";
+  if (state.periodMode === "custom") {
+    var startInput = document.getElementById("periodCustomStart"), endInput = document.getElementById("periodCustomEnd");
+    if (startInput && state.periodCustomStart) startInput.value = state.periodCustomStart;
+    if (endInput && state.periodCustomEnd) endInput.value = state.periodCustomEnd;
+  }
+}
+
+function setPeriod(mode) {
+  state.periodMode = mode;
+  renderPeriodControls();
+  persistFilterPrefs();
+  if (mode === "custom") {
+    var startInput = document.getElementById("periodCustomStart"), endInput = document.getElementById("periodCustomEnd");
+    if (startInput && endInput && (!startInput.value || !endInput.value)) {
+      var now = new Date();
+      startInput.value = formatDate(new Date(now.getTime() - 6*86400000));
+      endInput.value = formatDate(now);
+    }
+    return; // wait for Apply
+  }
+  fetchDashboardData();
+}
+
+function applyPeriodCustom() {
+  var s = document.getElementById("periodCustomStart").value, e = document.getElementById("periodCustomEnd").value;
+  if (!s || !e) { toast("error","Please select both start and end dates"); return; }
+  if (s > e) { toast("error","Start date must be before end date"); return; }
+  state.periodCustomStart = s; state.periodCustomEnd = e;
+  persistFilterPrefs();
+  fetchDashboardData();
+}
+
+// The month quick-jump dropdown is really just a fast way to fill in a
+// Custom range with a full calendar month's bounds — it doesn't add a
+// seventh independent mode, it sets Custom to that month so there's only
+// ever one "currently active" way to read the period (the Custom button
+// lighting up), instead of two controls that could each claim to be "the"
+// active one at the same time.
+function setPeriodFromMonthJump(monthKey) {
+  if (!monthKey) return;
+  var p = monthKey.split("-"), year=parseInt(p[0],10), month=parseInt(p[1],10);
+  var start = new Date(year, month-1, 1), end = new Date(year, month, 0);
+  state.periodMode = "custom";
+  state.periodCustomStart = formatDate(start);
+  state.periodCustomEnd = formatDate(end);
+  renderPeriodControls();
+  persistFilterPrefs();
+  fetchDashboardData();
+}
+
+// Marks the case tiles/chart/table area — and now the top stat tiles too,
+// since one period drives both — as "refreshing" via a pulsing glow border
+// instead of wiping their content. Keeps the last-known numbers visible
+// while a fetch is in flight rather than flashing to blank on every switch.
+function setDashboardLoadingVisual(loading) {
+  var targets = [];
+  document.querySelectorAll('#statsGrid .stat-card').forEach(function(c){ targets.push(c); });
+  document.querySelectorAll('#caseStatsGrid .stat-card').forEach(function(c){ targets.push(c); });
+  var chartCanvas = document.getElementById('caseChart');
+  if (chartCanvas) { var cc = chartCanvas.closest('.card'); if (cc) targets.push(cc); }
+  var perfTable = document.getElementById('caseAnalystTable');
+  if (perfTable) { var pc = perfTable.closest('.card'); if (pc) targets.push(pc); }
+  var analystTable = document.getElementById('analystTable');
+  if (analystTable) { var at = analystTable.closest('.card'); if (at) targets.push(at); }
+  var taskChartCanvas = document.getElementById('taskChart');
+  if (taskChartCanvas) { var tc = taskChartCanvas.closest('.card'); if (tc) targets.push(tc); }
+  targets.forEach(function(t){ t.classList.toggle('cases-loading-pulse', loading); });
+
+  var logBody = document.getElementById('caseLogBody');
+  if (logBody) logBody.closest('.table-wrap').classList.toggle('cases-loading-pulse', loading);
+}
+
+// Single combined fetch (entries + cases + prior-period cases) driving the
+// entire Dashboard view — see getDashboardData() in Code.gs.
+function fetchDashboardData() {
+  var b = getPeriodBounds();
+  var pb = getPriorPeriodBounds(b);
+  state.periodLoading = true;
+  renderPeriodControls(); // disables the period buttons for the duration of this fetch
+  document.getElementById("periodDesc").textContent = "Loading data for " + periodLabel() + "…";
+  setDashboardLoadingVisual(true);
+  apiGet("getDashboardData",{start:b.start,end:b.end,priorStart:pb.start,priorEnd:pb.end}).then(function(result){
+    state.allRangeEntries=(result&&!result.error&&Array.isArray(result.entries))?result.entries:[];
+    state.allRangeCases=(result&&!result.error&&Array.isArray(result.cases))?result.cases:[];
+    state.allPriorRangeCases=(result&&!result.error&&Array.isArray(result.priorCases))?result.priorCases:[];
+    document.getElementById("periodDesc").textContent = "Showing data for " + periodLabel();
+    state.periodLoading = false;
+    renderPeriodControls();
+    setDashboardLoadingVisual(false);
+    updateAnalystFilterOptions();
+    applyAnalystFilter();
+    applyCaseFilter();
+  }).catch(function(){
+    state.allRangeEntries=[]; state.allRangeCases=[]; state.allPriorRangeCases=[];
+    document.getElementById("periodDesc").textContent = "Showing data for " + periodLabel();
+    state.periodLoading = false;
+    renderPeriodControls();
+    setDashboardLoadingVisual(false);
+    applyAnalystFilter();
+    applyCaseFilter();
+  });
+}
+
+// Populates the month quick-jump dropdown only — no longer triggers its
+// own fetch (fetchDashboardData() owns the actual data load now).
+function loadMonths() {
+  var sel = document.getElementById("monthQuickJump");
+  sel.innerHTML = '<option value="">Jump to month…</option>';
+  apiGet("getAvailableMonths").then(function(months) {
+    if (!months||months.error||!months.length) return;
+    months.forEach(function(m){ var o=document.createElement("option"); o.value=m; o.textContent=formatMonthLabel(m); sel.appendChild(o); });
+  }).catch(function(err){ toast("error","Failed to load months: "+err); });
+}
+
+// ============================================================
+// CASE PERIOD — now driven entirely by the unified period control above
+// (getPeriodBounds/periodLabel/fetchDashboardData). formatDateRangeDisplay
+// is still used by periodLabel() to render the concrete date span.
+// ============================================================
 function formatDateRangeDisplay(startStr, endStr) {
   var s = new Date(startStr+"T00:00:00"), e = new Date(endStr+"T00:00:00");
   var opts = {month:"short", day:"numeric"};
@@ -872,140 +953,6 @@ function formatDateRangeDisplay(startStr, endStr) {
     return s.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) + " – " + e.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
   }
   return s.toLocaleDateString("en-US",opts) + " – " + e.toLocaleDateString("en-US",opts) + ", " + e.getFullYear();
-}
-
-function casePeriodLabel() {
-  var b = getCasePeriodBounds();
-  var rangeStr = formatDateRangeDisplay(b.start, b.end);
-  if (state.casePeriodMode === "today") return "Today · " + rangeStr;
-  if (state.casePeriodMode === "week")  return "This Week · " + rangeStr;
-  if (state.casePeriodMode === "30d")   return "Last 30 Days · " + rangeStr;
-  if (state.casePeriodMode === "60d")   return "Last 60 Days · " + rangeStr;
-  if (state.casePeriodMode === "90d")   return "Last 90 Days · " + rangeStr;
-  return rangeStr;
-}
-
-function getPriorCasePeriodBounds(bounds) {
-  var start = new Date(bounds.start+"T00:00:00"), end = new Date(bounds.end+"T00:00:00");
-  var dayCount = Math.round((end.getTime()-start.getTime())/86400000) + 1;
-  var priorEnd = new Date(start.getTime() - 86400000);
-  var priorStart = new Date(priorEnd.getTime() - (dayCount-1)*86400000);
-  return { start: formatDate(priorStart), end: formatDate(priorEnd) };
-}
-
-// CASE PERIOD CONTROLS — now rendered into every container listed here, so
-// the same Today/This Week/30/60/90/Custom buttons appear both above the
-// top "Cases / Kount AHT / Zendesk AHT / RADAR AHT" quick-view tiles AND
-// next to the "PI Cases" section header further down. Both read/write the
-// same state.casePeriodMode, so picking a period in either spot updates
-// both — there's only ever one period in play, just two visible places to
-// see and change it.
-var CASE_PERIOD_CONTROL_CONTAINER_IDS = ["caseStatsGridPeriodControls", "casePeriodControls"];
-
-function renderCasePeriodControls() {
-  var opts = [["today","Today"],["week","This Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
-  var html = opts.map(function(o){
-    // Disabled (not hidden) while a fetch is in flight — the buttons stay
-    // visible so it's clear a period IS selected, but clicking another one
-    // mid-request would just queue up a second overlapping fetch racing the
-    // first, so this blocks that rather than relying on people not to
-    // double-click while waiting.
-    var disabledAttr = state.casesLoading ? ' disabled' : '';
-    return '<button class="platform-filter-btn'+(state.casePeriodMode===o[0]?' active':'')+'"'+disabledAttr+' onclick="setCasePeriod(\''+o[0]+'\')">'+o[1]+'</button>';
-  }).join("");
-  CASE_PERIOD_CONTROL_CONTAINER_IDS.forEach(function(id){
-    var el = document.getElementById(id);
-    if (el) el.innerHTML = html;
-  });
-  var customRow = document.getElementById("casePeriodCustomRow");
-  if (customRow) customRow.style.display = state.casePeriodMode === "custom" ? "flex" : "none";
-  if (state.casePeriodMode === "custom") {
-    var startInput = document.getElementById("casePeriodStart"), endInput = document.getElementById("casePeriodEnd");
-    if (startInput && state.casePeriodStart) startInput.value = state.casePeriodStart;
-    if (endInput && state.casePeriodEnd) endInput.value = state.casePeriodEnd;
-  }
-}
-
-function setCasePeriod(mode) {
-  state.casePeriodMode = mode;
-  renderCasePeriodControls();
-  persistFilterPrefs();
-  if (mode === "custom") {
-    var startInput = document.getElementById("casePeriodStart"), endInput = document.getElementById("casePeriodEnd");
-    if (startInput && endInput && (!startInput.value || !endInput.value)) {
-      var now = new Date();
-      startInput.value = formatDate(new Date(now.getTime() - 6*86400000));
-      endInput.value = formatDate(now);
-    }
-    // Custom picker inputs live only in the PI Cases section (not
-    // duplicated above the quick-view tiles) — scroll there so whoever
-    // clicked "Custom" from the top bar can see the date fields they need
-    // to fill in, instead of wondering why nothing happened.
-    var customRow = document.getElementById("casePeriodCustomRow");
-    if (customRow) customRow.scrollIntoView({ behavior:"smooth", block:"center" });
-    return; // wait for Apply
-  }
-  fetchCasesForPeriod();
-}
-
-function applyCasePeriodCustom() {
-  var s = document.getElementById("casePeriodStart").value, e = document.getElementById("casePeriodEnd").value;
-  if (!s || !e) { toast("error","Please select both start and end dates"); return; }
-  if (s > e) { toast("error","Start date must be before end date"); return; }
-  state.casePeriodStart = s; state.casePeriodEnd = e;
-  persistFilterPrefs();
-  fetchCasesForPeriod();
-}
-
-// Marks the case tiles/chart/table area as "refreshing" via a pulsing glow
-// border instead of wiping their content — the previous approach replaced
-// everything with a spinner, which meant every period switch flashed to
-// blank before repopulating, which is its own kind of jarring on fast
-// (cached) responses. Keeping the last-known numbers visible with a glow
-// around them communicates "this is updating" without the flash, and still
-// falls back to a spinner in the Detailed Case Log body specifically since
-// that one has nothing meaningful to show on a first-ever load.
-function setCaseLoadingVisual(loading) {
-  var targets = [];
-  document.querySelectorAll('#caseStatsGrid .stat-card').forEach(function(c){ targets.push(c); });
-  var chartCanvas = document.getElementById('caseChart');
-  if (chartCanvas) { var cc = chartCanvas.closest('.card'); if (cc) targets.push(cc); }
-  var perfTable = document.getElementById('caseAnalystTable');
-  if (perfTable) { var pc = perfTable.closest('.card'); if (pc) targets.push(pc); }
-  targets.forEach(function(t){ t.classList.toggle('cases-loading-pulse', loading); });
-
-  var logBody = document.getElementById('caseLogBody');
-  if (logBody && loading) logBody.closest('.table-wrap').classList.add('cases-loading-pulse');
-  else if (logBody) logBody.closest('.table-wrap').classList.remove('cases-loading-pulse');
-}
-
-function fetchCasesForPeriod() {
-  var b = getCasePeriodBounds();
-  var pb = getPriorCasePeriodBounds(b);
-  state.casesLoading = true;
-  renderCasePeriodControls(); // disables the period buttons for the duration of this fetch
-  document.getElementById("casePeriodDesc").textContent = "Loading cases for " + casePeriodLabel() + "…";
-  setCaseLoadingVisual(true);
-  // Single combined call (current + prior period in one Apps Script
-  // execution) instead of two separate apiGet calls — halves the number of
-  // network round trips / cold-start hits the dashboard pays per period
-  // switch. See getCaseEntriesWithPrior() in Code.gs.
-  apiGet("getCaseEntriesWithPrior",{start:b.start,end:b.end,priorStart:pb.start,priorEnd:pb.end}).then(function(result){
-    state.allRangeCases=(result&&!result.error&&result.current)?result.current:[];
-    state.allPriorRangeCases=(result&&!result.error&&result.prior)?result.prior:[];
-    document.getElementById("casePeriodDesc").textContent = "Showing cases for " + casePeriodLabel();
-    state.casesLoading = false;
-    renderCasePeriodControls();
-    setCaseLoadingVisual(false);
-    applyCaseFilter();
-  }).catch(function(){
-    state.allRangeCases=[]; state.allPriorRangeCases=[];
-    document.getElementById("casePeriodDesc").textContent = "Showing cases for " + casePeriodLabel();
-    state.casesLoading = false;
-    renderCasePeriodControls();
-    setCaseLoadingVisual(false);
-    applyCaseFilter();
-  });
 }
 
 function filterCasesForCurrentScope(cases) {
@@ -1092,7 +1039,7 @@ function scopeEntriesForCurrentUser(entries){
 }
 
 function applyAnalystFilter() {
-  state.entries = scopeEntriesForCurrentUser(state.allMonthEntries);
+  state.entries = scopeEntriesForCurrentUser(state.allRangeEntries);
   updateTimeLogFilterOptions();
   updateOverviewFilterOptions();
   renderStats(); renderAnalystTable(); renderTimeLog(); renderEditedSection(); renderChart(); renderCaseStats(); renderIdleGaps();
@@ -1108,7 +1055,7 @@ function renderStats() {
     {label:"Today's Activity",value:sum(e.filter(function(x){return x.date===today;}),"duration")>0?fmtDurationShort(sum(e.filter(function(x){return x.date===today;}),"duration")):"--",sub:"Today · Yesterday: "+(sum(e.filter(function(x){return x.date===yday;}),"duration")>0?fmtDurationShort(sum(e.filter(function(x){return x.date===yday;}),"duration")):"--")},
   ];
   if (state.user.isSupervisor) cards.push({label:"Analysts Working",value:String(new Set(wk.map(function(x){return x.analyst;})).size),sub:"This week"});
-  cards.push({label:"Monthly Logged Time",value:fmtDurationShort(sum(e,"duration")),sub:document.getElementById("periodDesc").textContent});
+  cards.push({label:"Logged Time (Selected Period)",value:fmtDurationShort(sum(e,"duration")),sub:periodLabel()});
   document.getElementById("statsGrid").innerHTML=cards.map(function(c){return '<div class="stat-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("");
 }
 
@@ -1132,7 +1079,7 @@ function renderCaseStats() {
   var pza=ahtFromCases(prior.filter(function(c){return c.platform==='Zendesk';}));
   var pra=ahtFromCases(prior.filter(function(c){return c.platform==='RADAR';}));
   var cards=[
-    {label:"Cases ("+casePeriodLabel()+")",value:String(inRange.length)+deltaBadge(inRange.length,prior.length,null),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")+" · vs. prior period: "+prior.length},
+    {label:"Cases ("+periodLabel()+")",value:String(inRange.length)+deltaBadge(inRange.length,prior.length,null),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")+" · vs. prior period: "+prior.length},
     {label:"Kount AHT",value:fmtSeconds(ka.avgSec)+deltaBadge(ka.avgSec,pka.avgSec,true),sub:ka.count?"over "+ka.count+" case"+(ka.count===1?"":"s"):"no timed cases yet"},
     {label:"Zendesk AHT",value:fmtSeconds(za.avgSec)+deltaBadge(za.avgSec,pza.avgSec,true),sub:za.count?"over "+za.count+" case"+(za.count===1?"":"s"):"no timed cases yet"},
     {label:"RADAR AHT",value:fmtSeconds(ra.avgSec)+deltaBadge(ra.avgSec,pra.avgSec,true),sub:ra.count?"over "+ra.count+" case"+(ra.count===1?"":"s"):"no timed cases yet"}
@@ -1232,7 +1179,7 @@ function exportCaseLogCSV(){
   var headers=["Date","Analyst","Platform","Case ID","Source","Handle Time (seconds)","Handle Time"];
   var rows=filtered.map(function(c){return [c.date,c.analyst,c.platform,c.case_id,c.source||"",c.handle_seconds!=null?c.handle_seconds:"",fmtSeconds(c.handle_seconds)];});
   var csv=[headers,...rows].map(function(r){return r.map(function(v){v=String(v||"");return v.includes(",")||v.includes('"')?'"'+v.replace(/"/g,'""')+'"':v;}).join(",");}).join("\n");
-  var b = getCasePeriodBounds();
+  var b = getPeriodBounds();
   var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="case_log_"+b.start+"_to_"+b.end+".csv";a.click();
   toast("success","Exported "+filtered.length+" cases");
 }
@@ -1264,14 +1211,10 @@ function renderChart(){
   state.taskChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:labels.map(function(_,i){return colors[i%colors.length];}),borderRadius:6}]},options:{indexAxis:"y",plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return " "+fmtDurationShort(Math.round(ctx.raw*3600));}}}},scales:{x:{title:{display:true,text:"Hours"},ticks:{color:state.isDark?"#ccc":"#555"}},y:{grid:{display:false},ticks:{color:state.isDark?"#ccc":"#555",font:{size:11}}}},responsive:true,maintainAspectRatio:false}});
 }
 
-function getTimeLogSourceEntries(){
-  return state.timeLogCustomRange.active ? scopeEntriesForCurrentUser(state.timeLogCustomRange.entries) : state.entries;
-}
-
 function updateTimeLogFilterOptions(){
   var analystSel=document.getElementById("timeLogAnalystFilter"), activitySel=document.getElementById("timeLogActivityFilter");
   if(!analystSel||!activitySel) return;
-  var src = getTimeLogSourceEntries();
+  var src = state.entries;
   var analysts=[...new Set(src.map(function(e){return e.analyst;}))].sort();
   var activities=[...new Set(src.map(function(e){return e.task;}))].sort();
   var keepAnalyst=analysts.indexOf(state.timeLogAnalystFilter)!==-1?state.timeLogAnalystFilter:"all";
@@ -1300,7 +1243,7 @@ function getOverviewEntries(){
 }
 
 function renderTimeLog(){
-  var filtered=getTimeLogSourceEntries().filter(function(e){
+  var filtered=state.entries.filter(function(e){
     if(state.timeLogAnalystFilter!=="all"&&e.analyst!==state.timeLogAnalystFilter) return false;
     if(state.timeLogActivityFilter!=="all"&&e.task!==state.timeLogActivityFilter) return false;
     return true;
@@ -1366,13 +1309,13 @@ function renderIdleGaps() {
 }
 
 function renderEditedSection(){
-  var edited=state.allMonthEntries.filter(function(e){return e.edited_at&&e.edit_reason;}).sort(function(a,b){return new Date(b.edited_at)-new Date(a.edited_at);}).slice(0,10);
+  var edited=state.allRangeEntries.filter(function(e){return e.edited_at&&e.edit_reason;}).sort(function(a,b){return new Date(b.edited_at)-new Date(a.edited_at);}).slice(0,10);
   document.getElementById("editedBody").innerHTML=edited.length===0?'<tr><td colspan="7" class="empty">No edited entries</td></tr>':edited.map(function(e){var pct="–";if(e.original_duration&&e.original_duration!==e.duration)pct=((Math.abs(e.duration-e.original_duration)/e.original_duration)*100).toFixed(1)+"%";return '<tr><td>'+esc(e.date)+'</td><td>'+esc(e.analyst)+'</td><td>'+esc(e.task)+'</td><td>'+fmtDuration(e.duration)+'</td><td>'+pct+'</td><td><span class="badge">'+esc(e.edit_reason)+'</span></td><td style="color:var(--text-muted)">'+fmtDateTime(e.edited_at)+'</td></tr>';}).join("");
 }
 
 function updateAnalystFilterOptions(){
   if(!state.user.isSupervisor)return;
-  var analysts=[...new Set(state.allMonthEntries.map(function(e){return e.analyst;}))].sort();
+  var analysts=[...new Set(state.allRangeEntries.map(function(e){return e.analyst;}))].sort();
   var sel=document.getElementById("analystFilter");sel.innerHTML='<option value="all">All Analysts</option>';
   analysts.forEach(function(a){var o=document.createElement("option");o.value=a;o.textContent=a;sel.appendChild(o);});
   if(state.selectedAnalyst!=="all"&&analysts.indexOf(state.selectedAnalyst)===-1) state.selectedAnalyst="all";
@@ -1402,7 +1345,7 @@ function saveEdit(){
   var updates={task:document.getElementById("edit_task").value.trim(),duration:h*3600+m*60+s,start_time:document.getElementById("edit_startTime").value?localToUtc(entry.date,document.getElementById("edit_startTime").value):null,end_time:document.getElementById("edit_endTime").value?localToUtc(entry.date,document.getElementById("edit_endTime").value):null,edit_reason:reason};
   document.getElementById("saveEditBtn").disabled=true;document.getElementById("saveEditBtn").textContent="Saving…";
   apiPost({action:"updateTimeEntry",id:entry.id,updates:updates,callerEmail:state.user.email})
-    .then(function(res){document.getElementById("saveEditBtn").disabled=false;document.getElementById("saveEditBtn").textContent="Save Changes";if(res.error){toast("error",res.error);return;}toast("success","Entry updated!");closeEditModal();fetchEntries();})
+    .then(function(res){document.getElementById("saveEditBtn").disabled=false;document.getElementById("saveEditBtn").textContent="Save Changes";if(res.error){toast("error",res.error);return;}toast("success","Entry updated!");closeEditModal();fetchDashboardData();})
     .catch(function(err){document.getElementById("saveEditBtn").disabled=false;document.getElementById("saveEditBtn").textContent="Save Changes";toast("error","Failed: "+err);});
 }
 
@@ -1756,7 +1699,7 @@ function setupCSVDrop(){
   document.getElementById("importBtn").addEventListener("click",function(){
     if(!csvFileData)return;this.disabled=true;this.textContent="⏳ Importing…";var btn=this;
     apiPost({action:"importCSV",csvText:csvFileData,callerEmail:state.user.email})
-      .then(function(res){btn.disabled=false;btn.textContent="⬆ Import CSV";if(res.error){toast("error",res.error);return;}toast("success","Imported "+res.inserted+" entries ("+res.skipped+" skipped)");csvFileData=null;document.getElementById("csvFileName").textContent="";document.getElementById("importBtn").style.display="none";fetchEntries();})
+      .then(function(res){btn.disabled=false;btn.textContent="⬆ Import CSV";if(res.error){toast("error",res.error);return;}toast("success","Imported "+res.inserted+" entries ("+res.skipped+" skipped)");csvFileData=null;document.getElementById("csvFileName").textContent="";document.getElementById("importBtn").style.display="none";fetchDashboardData();})
       .catch(function(err){btn.disabled=false;btn.textContent="⬆ Import CSV";toast("error","Import failed: "+err);});
   });
 }
@@ -1902,7 +1845,6 @@ function setupTheme(){
 function applyTheme(dark){state.isDark=dark;document.body.classList.toggle("dark",dark);document.getElementById("themeToggle").textContent=dark?"☀️":"🌙";if(localStorage)localStorage.setItem("theme",dark?"dark":"light");if(state.taskChart)renderChart();if(state.caseChart)renderCaseChart();if(state.trendsLoaded)renderTrendsChart();}
 
 function setDefaultDateRanges(){var t=new Date(),s=new Date(t.getTime()-42*86400000);document.getElementById("teamStartDate").value=formatDate(s);document.getElementById("teamEndDate").value=formatDate(t);}
-function updatePeriodDesc(s,e){var sd=new Date(s+"T00:00:00"),ed=new Date(e+"T00:00:00");document.getElementById("periodDesc").textContent=sd.toLocaleDateString("en-US",{month:"short",day:"numeric"})+" – "+ed.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});}
 
 function utcToLocalInput(date,utcTime){if(!utcTime)return"";try{var d=utcTime.includes("T")?new Date(utcTime):new Date(date+"T"+utcTime+"Z");return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");}catch(e){return utcTime.substring(0,5);}}
 function localToUtc(date,localTime){if(!localTime)return null;try{var p=localTime.split(":").map(Number),d=new Date(date+"T00:00:00");d.setHours(p[0],p[1],0,0);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":00";}catch(e){return localTime;}}
