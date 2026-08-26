@@ -446,13 +446,16 @@ function _getAllCasesRaw() {
   var sheet = ss.getSheetByName(SHEET_CASES);
   var results = [];
   if (sheet && sheet.getLastRow() >= 2) {
-    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
+    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 10).getValues();
     var tz = Session.getScriptTimeZone();
     for (var i = 0; i < data.length; i++) {
       var row = data[i];
       var dateStr = (row[0] instanceof Date) ? Utilities.formatDate(row[0], tz, "yyyy-MM-dd") : String(row[0] || "").substring(0, 10);
       if (!dateStr) continue;
-      results.push([dateStr, String(row[1]||""), String(row[2]||""), String(row[3]||""), String(row[4]||""), (typeof row[5]==="number"&&row[5]>0)?row[5]:null, String(row[7]||"")]);
+      // 8th element (index 7) is timing_method — "bulk" for RADAR cases
+      // completed via a bulk-mark action (no individual open/close pair to
+      // time), blank for everything else.
+      results.push([dateStr, String(row[1]||""), String(row[2]||""), String(row[3]||""), String(row[4]||""), (typeof row[5]==="number"&&row[5]>0)?row[5]:null, String(row[7]||""), String(row[9]||"")]);
     }
   }
 
@@ -485,7 +488,7 @@ function _readAllCases(startDate, endDate) {
     for (var i = 0; i < all.length; i++) {
       var r = all[i];
       if (r[0] < startDate || r[0] > endDate) continue;
-      results.push({ date: r[0], analyst: r[1], platform: r[2], case_id: r[3], source: r[4], handle_seconds: r[5], solved_at: r[6] });
+      results.push({ date: r[0], analyst: r[1], platform: r[2], case_id: r[3], source: r[4], handle_seconds: r[5], solved_at: r[6], timing_method: r[7] });
     }
     return results;
   } catch(e) { return []; }
@@ -888,6 +891,18 @@ function _digestComputeOpenAttentionFlagCount() {
       });
     });
 
+    // RADAR SLOW CASE — mirrors the per-case 5+ minute flag in
+    // index.html's computeAttentionFlags(), so the digest's flag count
+    // matches what an admin would actually see if they opened the
+    // dashboard right now. RADAR-only, per-case (not per-analyst-pattern
+    // like the two loops above).
+    var RADAR_SLOW_CASE_THRESHOLD_SEC = 300; // 5 minutes
+    cases.forEach(function(c){
+      if (c.platform !== "RADAR") return;
+      if (typeof c.handle_seconds !== "number" || c.handle_seconds < RADAR_SLOW_CASE_THRESHOLD_SEC) return;
+      flagKeys.push("radarslow:"+c.analyst+":"+c.date+":"+c.case_id);
+    });
+
     var reviewed = {};
     getReviewedFlagKeys().forEach(function(k){ reviewed[k]=true; });
     return flagKeys.filter(function(k){ return !reviewed[k]; }).length;
@@ -1287,8 +1302,15 @@ function handleCaseRow(payload) {
     var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
     var sheet = getOrCreateSheet(ss, SHEET_CASES);
     if (sheet.getLastRow() === 0) {
-      sheet.appendRow(["Date","Analyst","Platform","Case ID","Source","Handle (sec)","Handle (min)","Solved At","dedupe_key"]);
-      sheet.getRange(1,1,1,9).setFontWeight("bold"); sheet.setFrozenRows(1);
+      // "Timing Method" (col J) — added to distinguish an EXPECTED gap in
+      // handle time (a RADAR bulk-mark action, which never has an
+      // individual open/close pair to time) from a genuinely missing/
+      // unexplained one. Appended after dedupe_key rather than inserted
+      // earlier so the dedupe check below (column 9) never needs updating.
+      // Blank/omitted for every platform that doesn't send it — Kount and
+      // Zendesk, and RADAR's individually-timed cases, are unaffected.
+      sheet.appendRow(["Date","Analyst","Platform","Case ID","Source","Handle (sec)","Handle (min)","Solved At","dedupe_key","Timing Method"]);
+      sheet.getRange(1,1,1,10).setFontWeight("bold"); sheet.setFrozenRows(1);
     }
     var dedupeKey = [payload.date, payload.platform, payload.case_id].join("|");
     if (sheet.getLastRow() > 1) {
@@ -1299,7 +1321,7 @@ function handleCaseRow(payload) {
     }
     var hs = (payload.handle_seconds===null||payload.handle_seconds===undefined)?'':payload.handle_seconds;
     var hm = hs===''?'':Math.round((hs/60)*100)/100;
-    sheet.appendRow([payload.date||'', payload.analyst||'', payload.platform||'', payload.case_id||'', payload.source||'', hs, hm, payload.solved_at||'', dedupeKey]);
+    sheet.appendRow([payload.date||'', payload.analyst||'', payload.platform||'', payload.case_id||'', payload.source||'', hs, hm, payload.solved_at||'', dedupeKey, payload.timing_method||'']);
     bumpCacheVersion("cases");
     return jsonResponse({ success: true });
   } catch(err) { return jsonResponse({ error: err.toString() }); }
