@@ -1110,11 +1110,25 @@ function renderCaseStats() {
   var pka=ahtFromCases(prior.filter(function(c){return c.platform==='Kount';}));
   var pza=ahtFromCases(prior.filter(function(c){return c.platform==='Zendesk';}));
   var pra=ahtFromCases(prior.filter(function(c){return c.platform==='RADAR';}));
+  // Bulk-marked cases (RADAR grid actions with no individual open/close
+  // pair to time) are excluded from the AHT average above just like any
+  // other untimed case — but silently excluding them with no count shown
+  // made it look like they'd simply vanished. Surfacing the count here
+  // keeps the "denominator is smaller than the platform total" visible
+  // and explained, instead of a mystery.
+  function bulkCount(cases){ return cases.filter(function(c){ return c.timing_method==="bulk" && !(c.handle_seconds>0); }).length; }
+  var kBulk=bulkCount(kc), zBulk=bulkCount(zc), rBulk=bulkCount(rc);
+  function ahtSub(aht, bulk){
+    var parts = [];
+    parts.push(aht.count ? "over "+aht.count+" case"+(aht.count===1?"":"s") : "no timed cases yet");
+    if (bulk) parts.push(bulk+" bulk-marked");
+    return parts.join(" · ");
+  }
   var cards=[
     {label:"Cases ("+periodLabel()+")",value:String(inRange.length)+deltaBadge(inRange.length,prior.length,null),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")+" · vs. prior period: "+prior.length},
-    {label:"Kount AHT",value:fmtSeconds(ka.avgSec)+deltaBadge(ka.avgSec,pka.avgSec,true),sub:ka.count?"over "+ka.count+" case"+(ka.count===1?"":"s"):"no timed cases yet"},
-    {label:"Zendesk AHT",value:fmtSeconds(za.avgSec)+deltaBadge(za.avgSec,pza.avgSec,true),sub:za.count?"over "+za.count+" case"+(za.count===1?"":"s"):"no timed cases yet"},
-    {label:"RADAR AHT",value:fmtSeconds(ra.avgSec)+deltaBadge(ra.avgSec,pra.avgSec,true),sub:ra.count?"over "+ra.count+" case"+(ra.count===1?"":"s"):"no timed cases yet"}
+    {label:"Kount AHT",value:fmtSeconds(ka.avgSec)+deltaBadge(ka.avgSec,pka.avgSec,true),sub:ahtSub(ka,kBulk)},
+    {label:"Zendesk AHT",value:fmtSeconds(za.avgSec)+deltaBadge(za.avgSec,pza.avgSec,true),sub:ahtSub(za,zBulk)},
+    {label:"RADAR AHT",value:fmtSeconds(ra.avgSec)+deltaBadge(ra.avgSec,pra.avgSec,true),sub:ahtSub(ra,rBulk)}
   ];
   var g=document.getElementById("caseStatsGrid");
   if (g) g.innerHTML=cards.map(function(c){return '<div class="stat-card case-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("");
@@ -1201,7 +1215,7 @@ function renderCaseLog() {
       var title = flag.dir==="high" ? (flag.times+"x the platform average — much slower than usual") : (flag.times+"x the platform average — much faster than usual");
       flagBadge = ' <span data-tooltip="'+esc(title)+'" style="display:inline-block;width:.5rem;height:.5rem;border-radius:50%;background:'+color+';margin-left:.4rem;vertical-align:middle"></span>';
     }
-    return '<tr><td>'+esc(c.date)+'</td><td>'+esc(c.analyst)+'</td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+esc(c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+fmtSeconds(c.handle_seconds)+flagBadge+'</td></tr>';
+    return '<tr><td>'+esc(c.date)+'</td><td>'+esc(c.analyst)+'</td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+esc(c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+flagBadge+'</td></tr>';
   }).join("");
 }
 
@@ -1209,7 +1223,7 @@ function exportCaseLogCSV(){
   var filtered = getFilteredCaseLogRows();
   if (!filtered.length) { toast("error","No cases to export"); return; }
   var headers=["Date","Analyst","Platform","Case ID","Source","Handle Time (seconds)","Handle Time"];
-  var rows=filtered.map(function(c){return [c.date,c.analyst,c.platform,c.case_id,c.source||"",c.handle_seconds!=null?c.handle_seconds:"",fmtSeconds(c.handle_seconds)];});
+  var rows=filtered.map(function(c){return [c.date,c.analyst,c.platform,c.case_id,c.source||"",c.handle_seconds!=null?c.handle_seconds:"",fmtHandleTime(c)];});
   var csv=[headers,...rows].map(function(r){return r.map(function(v){v=String(v||"");return v.includes(",")||v.includes('"')?'"'+v.replace(/"/g,'""')+'"':v;}).join(",");}).join("\n");
   var b = getPeriodBounds();
   var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="case_log_"+b.start+"_to_"+b.end+".csv";a.click();
@@ -1220,6 +1234,30 @@ function sortCaseTable(field){state.caseSortDir=state.caseSortField===field?(sta
 
 function ahtFromCases(cases){var d=cases.filter(function(c){return typeof c.handle_seconds==="number"&&c.handle_seconds>0;}).map(function(c){return c.handle_seconds;});if(!d.length)return{avgSec:null,count:0};return{avgSec:Math.round(d.reduce(function(a,b){return a+b;},0)/d.length),count:d.length};}
 function fmtSeconds(sec){if(sec==null||!isFinite(sec)||sec<=0)return"—";var m=Math.floor(sec/60),s=Math.round(sec%60);return m<=0?s+"s":m+"m "+String(s).padStart(2,"0")+"s";}
+// Wraps fmtSeconds() for case rows specifically — a null handle_seconds on
+// a case flagged timing_method:"bulk" is an EXPECTED gap (RADAR bulk-mark
+// actions never have an individual open/close pair to time), not a data
+// problem. Showing "Bulk" there instead of the same bare "—" used for a
+// genuinely missing/unexplained time keeps those two very different
+// situations visually distinct instead of indistinguishable.
+function fmtHandleTime(c){
+  if ((c.handle_seconds==null || !(c.handle_seconds>0)) && c.timing_method==="bulk") return "Bulk";
+  return fmtSeconds(c.handle_seconds);
+}
+// HTML-table version of fmtHandleTime() — wraps "Bulk" with a tooltip
+// carrying the fuller, more honest explanation (a bulk-processed case is
+// the most likely cause, but it's not the only possible one — a case
+// reviewed by copy/pasting the ID into a separate tab produces the exact
+// same untimed result). Keeps the visible label short and scannable while
+// not overclaiming certainty for anyone who checks. fmtHandleTime() itself
+// stays plain text for the CSV export, where a tooltip has nowhere to go.
+function renderHandleTimeCell(c){
+  var txt = fmtHandleTime(c);
+  if (txt === "Bulk") {
+    return '<span data-tooltip="No timer captured — most likely bulk-processed, though it can also mean the case was reviewed in a separate tab">Bulk</span>';
+  }
+  return txt;
+}
 
 function renderAnalystTable(){var entries=getOverviewEntries();var t={};entries.forEach(function(e){t[e.analyst]=(t[e.analyst]||0)+e.duration;});var s=Object.entries(t).sort(function(a,b){return b[1]-a[1];});document.getElementById("analystTable").innerHTML=s.length===0?'<div class="empty">No entries match filters</div>':s.map(function(x){return '<div class="analyst-row"><span class="analyst-name">'+esc(x[0])+'</span><span class="analyst-hours">'+fmtDurationShort(x[1])+'</span></div>';}).join("");}
 
@@ -1468,6 +1506,23 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
     });
   });
 
+  // RADAR SLOW CASE — a single RADAR case with a genuine (non-null,
+  // non-zero) handle time of 5+ minutes. Unlike the two flag types above,
+  // this is per-CASE rather than per-analyst-pattern, so its key includes
+  // the case_id — each slow case gets its own flag, reviewable/archivable
+  // independently of any others on the same day. RADAR-only per current
+  // scope; Kount/Zendesk aren't included.
+  var RADAR_SLOW_CASE_THRESHOLD_SEC = 300; // 5 minutes
+  cases.forEach(function(c){
+    if (c.platform !== "RADAR") return;
+    if (typeof c.handle_seconds !== "number" || c.handle_seconds < RADAR_SLOW_CASE_THRESHOLD_SEC) return;
+    flags.push({
+      analyst: c.analyst,
+      message: "RADAR case "+c.case_id+" took "+fmtSeconds(c.handle_seconds)+" ("+c.date+")",
+      key: "radarslow:"+c.analyst+":"+c.date+":"+c.case_id
+    });
+  });
+
   return flags;
 }
 
@@ -1638,7 +1693,7 @@ function renderQuickViewTable() {
     head = '<tr><th>Date</th><th>Analyst</th><th>Platform</th><th>Case ID</th><th>Source</th><th style="text-align:right">Handle Time</th></tr>';
     body = cases.length===0 ? '<tr><td colspan="6" class="empty">No cases match filters</td></tr>' : cases.map(function(c){
       var pc = c.platform==='Kount'?'badge-kount':c.platform==='Zendesk'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':'';
-      return '<tr><td>'+esc(c.date)+'</td><td><span class="badge">'+esc(c.analyst)+'</span></td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+esc(c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+fmtSeconds(c.handle_seconds)+'</td></tr>';
+      return '<tr><td>'+esc(c.date)+'</td><td><span class="badge">'+esc(c.analyst)+'</span></td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+esc(c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+'</td></tr>';
     }).join("");
     document.getElementById("quickViewMeta").textContent=(state.quickViewAnalyst?state.quickViewAnalyst+" · ":"")+cases.length+" case"+(cases.length===1?"":"s");
   } else {
