@@ -26,11 +26,11 @@
   --card-rest-shadow:0 1px 3px rgba(0,0,0,.09), 0 4px 14px rgba(0,0,0,.06);
 }
 .dark{--bg:hsl(0,0%,10%);--card:hsl(0,0%,14%);--border:hsl(0,0%,20%);--text:hsl(0,0%,95%);--text-muted:hsl(0,0%,60%);--muted-bg:hsl(0,0%,18%);--card-rest-shadow:none;}
-.theme-fetch{--primary:hsl(355,75%,60%);--accent:hsl(330,65%,55%);--gradient:linear-gradient(135deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--gradient-btn:linear-gradient(90deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--shadow-soft:0 4px 16px -2px hsl(355,75%,60%,0.15);--shadow-med:0 8px 24px -4px hsl(355,75%,60%,0.2);}
+.theme-sunrise{--primary:hsl(355,75%,60%);--accent:hsl(330,65%,55%);--gradient:linear-gradient(135deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--gradient-btn:linear-gradient(90deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);--shadow-soft:0 4px 16px -2px hsl(355,75%,60%,0.15);--shadow-med:0 8px 24px -4px hsl(355,75%,60%,0.2);}
 .theme-ocean{--primary:hsl(205,80%,55%);--accent:hsl(190,70%,50%);--gradient:linear-gradient(135deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);--gradient-btn:linear-gradient(90deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);--shadow-soft:0 4px 16px -2px hsl(205,80%,55%,0.15);--shadow-med:0 8px 24px -4px hsl(205,80%,55%,0.2);}
 .theme-forest{--primary:hsl(150,55%,38%);--accent:hsl(90,45%,45%);--gradient:linear-gradient(135deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);--gradient-btn:linear-gradient(90deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);--shadow-soft:0 4px 16px -2px hsl(150,55%,38%,0.15);--shadow-med:0 8px 24px -4px hsl(150,55%,38%,0.2);}
 .theme-sunset{--primary:hsl(28,90%,55%);--accent:hsl(350,80%,60%);--gradient:linear-gradient(135deg,hsl(38,95%,55%) 0%,hsl(350,80%,60%) 100%);--gradient-btn:linear-gradient(90deg,hsl(38,95%,55%) 0%,hsl(350,80%,60%) 100%);--shadow-soft:0 4px 16px -2px hsl(28,90%,55%,0.15);--shadow-med:0 8px 24px -4px hsl(28,90%,55%,0.2);}
-.theme-grape{--primary:hsl(265,60%,58%);--accent:hsl(300,55%,55%);--gradient:linear-gradient(135deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);--gradient-btn:linear-gradient(90deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);--shadow-soft:0 4px 16px -2px hsl(265,60%,58%,0.15);--shadow-med:0 8px 24px -4px hsl(265,60%,58%,0.2);}
+.theme-fetch{--primary:hsl(265,60%,58%);--accent:hsl(300,55%,55%);--gradient:linear-gradient(135deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);--gradient-btn:linear-gradient(90deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);--shadow-soft:0 4px 16px -2px hsl(265,60%,58%,0.15);--shadow-med:0 8px 24px -4px hsl(265,60%,58%,0.2);}
 .theme-slate{--primary:hsl(210,20%,45%);--accent:hsl(210,15%,35%);--gradient:linear-gradient(135deg,hsl(215,25%,42%) 0%,hsl(210,15%,32%) 100%);--gradient-btn:linear-gradient(90deg,hsl(215,25%,42%) 0%,hsl(210,15%,32%) 100%);--shadow-soft:0 4px 16px -2px hsl(210,20%,45%,0.15);--shadow-med:0 8px 24px -4px hsl(210,20%,45%,0.2);}
 .theme-swatch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:.85rem;}
 .theme-swatch{cursor:pointer;border:2px solid var(--border);border-radius:.65rem;padding:.6rem;text-align:center;transition:border-color .15s,transform .15s;background:var(--card);}
@@ -38,11 +38,11 @@
 .theme-swatch.active{border-color:var(--primary);}
 .theme-swatch-preview{height:44px;border-radius:.45rem;margin-bottom:.5rem;}
 .theme-swatch-name{font-size:.8rem;font-weight:600;display:flex;align-items:center;justify-content:center;gap:.3rem;}
-.theme-swatch-preview-fetch{background:linear-gradient(135deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);}
+.theme-swatch-preview-sunrise{background:linear-gradient(135deg,hsl(10,85%,62%) 0%,hsl(330,65%,55%) 100%);}
 .theme-swatch-preview-ocean{background:linear-gradient(135deg,hsl(220,75%,58%) 0%,hsl(190,70%,50%) 100%);}
 .theme-swatch-preview-forest{background:linear-gradient(135deg,hsl(160,55%,36%) 0%,hsl(90,45%,45%) 100%);}
 .theme-swatch-preview-sunset{background:linear-gradient(135deg,hsl(38,95%,55%) 0%,hsl(350,80%,60%) 100%);}
-.theme-swatch-preview-grape{background:linear-gradient(135deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);}
+.theme-swatch-preview-fetch{background:linear-gradient(135deg,hsl(250,65%,60%) 0%,hsl(300,55%,55%) 100%);}
 .theme-swatch-preview-slate{background:linear-gradient(135deg,hsl(215,25%,42%) 0%,hsl(210,15%,32%) 100%);}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);transition:background .3s,color .3s;font-size:15px;line-height:1.5;}
 .container{max-width:1280px;margin:0 auto;padding:2rem 1.5rem;}
@@ -1825,20 +1825,20 @@ function toggleCollapsible(id){var c=document.getElementById(id+"Content"),t=c?c
 // THEME PALETTES
 // ============================================================
 var THEME_PRESETS = [
-  { id:"fetch",  name:"Fetch (Default)" },
-  { id:"ocean",  name:"Ocean" },
-  { id:"forest", name:"Forest" },
-  { id:"sunset", name:"Sunset" },
-  { id:"grape",  name:"Grape" },
-  { id:"slate",  name:"Slate" }
+  { id:"fetch",   name:"Fetch (Default)" },
+  { id:"sunrise", name:"Sunrise" },
+  { id:"ocean",   name:"Ocean" },
+  { id:"forest",  name:"Forest" },
+  { id:"sunset",  name:"Sunset" },
+  { id:"slate",   name:"Slate" }
 ];
 var THEME_CHART_COLORS = {
-  fetch:  ["hsl(355,75%,60%)","hsl(340,70%,58%)","hsl(325,68%,56%)","hsl(310,65%,54%)","hsl(295,62%,52%)"],
-  ocean:  ["hsl(205,80%,55%)","hsl(200,75%,52%)","hsl(195,72%,50%)","hsl(190,70%,50%)","hsl(185,68%,48%)"],
-  forest: ["hsl(150,55%,38%)","hsl(135,50%,40%)","hsl(120,48%,42%)","hsl(105,46%,44%)","hsl(90,45%,45%)"],
-  sunset: ["hsl(28,90%,55%)","hsl(15,88%,57%)","hsl(2,85%,58%)","hsl(349,82%,59%)","hsl(350,80%,60%)"],
-  grape:  ["hsl(265,60%,58%)","hsl(275,58%,57%)","hsl(285,56%,56%)","hsl(295,55%,55%)","hsl(300,55%,55%)"],
-  slate:  ["hsl(210,20%,45%)","hsl(212,19%,42%)","hsl(213,18%,39%)","hsl(211,16%,36%)","hsl(210,15%,35%)"]
+  fetch:   ["hsl(265,60%,58%)","hsl(275,58%,57%)","hsl(285,56%,56%)","hsl(295,55%,55%)","hsl(300,55%,55%)"],
+  sunrise: ["hsl(355,75%,60%)","hsl(340,70%,58%)","hsl(325,68%,56%)","hsl(310,65%,54%)","hsl(295,62%,52%)"],
+  ocean:   ["hsl(205,80%,55%)","hsl(200,75%,52%)","hsl(195,72%,50%)","hsl(190,70%,50%)","hsl(185,68%,48%)"],
+  forest:  ["hsl(150,55%,38%)","hsl(135,50%,40%)","hsl(120,48%,42%)","hsl(105,46%,44%)","hsl(90,45%,45%)"],
+  sunset:  ["hsl(28,90%,55%)","hsl(15,88%,57%)","hsl(2,85%,58%)","hsl(349,82%,59%)","hsl(350,80%,60%)"],
+  slate:   ["hsl(210,20%,45%)","hsl(212,19%,42%)","hsl(213,18%,39%)","hsl(211,16%,36%)","hsl(210,15%,35%)"]
 };
 var THEME_PALETTE_KEY = "fps_theme_palette";
 
