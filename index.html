@@ -318,6 +318,7 @@ textarea{resize:vertical;min-height:80px;}
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:.75rem">
             <div class="platform-filter-row" id="casePlatformFilterRow" style="margin:0"></div>
             <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+              <select id="caseLogAnalystFilterSelect" class="form-select" style="width:auto"><option value="all">All Analysts</option></select>
               <select id="caseSourceFilterSelect" class="form-select" style="width:auto"><option value="all">All Sources</option></select>
               <input type="text" id="caseSearchInput" class="date-input" placeholder="Search Case ID…" style="width:160px"/>
               <button class="btn btn-outline btn-sm" onclick="exportCaseLogCSV()">⬇ Export CSV</button>
@@ -547,7 +548,7 @@ var state = {
   user:null, entries:[], allRangeEntries:[], allRangeCases:[], allPriorRangeCases:[], cases:[],
   selectedAnalyst:"all", sortField:"date", sortDir:"desc",
   caseSortField:"date", caseSortDir:"desc", editEntry:null,
-  casePlatformFilter:"all", caseSourceFilter:"all",
+  casePlatformFilter:"all", caseSourceFilter:"all", caseLogAnalystFilter:"all",
   // UNIFIED PERIOD — one control (Today/Yesterday/This Week/30/60/90/Custom)
   // now drives everything on the Dashboard view: the top stat tiles, case
   // tiles, Time by Task, Analyst Logged Time, Detailed Time Log, and
@@ -581,6 +582,7 @@ function loadFilterPrefs(){
     if (p.periodCustomEnd) state.periodCustomEnd = p.periodCustomEnd;
     if (p.casePlatformFilter) state.casePlatformFilter = p.casePlatformFilter;
     if (p.caseSourceFilter) state.caseSourceFilter = p.caseSourceFilter;
+    if (p.caseLogAnalystFilter) state.caseLogAnalystFilter = p.caseLogAnalystFilter;
     if (p.caseSearchQuery) state.caseSearchQuery = p.caseSearchQuery;
     if (p.timeLogAnalystFilter) state.timeLogAnalystFilter = p.timeLogAnalystFilter;
     if (p.timeLogActivityFilter) state.timeLogActivityFilter = p.timeLogActivityFilter;
@@ -599,6 +601,7 @@ function persistFilterPrefs(){
       periodCustomEnd: state.periodCustomEnd,
       casePlatformFilter: state.casePlatformFilter,
       caseSourceFilter: state.caseSourceFilter,
+      caseLogAnalystFilter: state.caseLogAnalystFilter,
       caseSearchQuery: state.caseSearchQuery,
       timeLogAnalystFilter: state.timeLogAnalystFilter,
       timeLogActivityFilter: state.timeLogActivityFilter,
@@ -750,6 +753,7 @@ function bootWithUser(user) {
   document.getElementById("caseSearchInput").value = state.caseSearchQuery || "";
   document.getElementById("caseSearchInput").addEventListener("input", function(){ state.caseSearchQuery=this.value; persistFilterPrefs(); renderCaseLog(); });
   document.getElementById("caseSourceFilterSelect").addEventListener("change", function(){ state.caseSourceFilter=this.value; persistFilterPrefs(); renderCaseLog(); });
+  document.getElementById("caseLogAnalystFilterSelect").addEventListener("change", function(){ state.caseLogAnalystFilter=this.value; persistFilterPrefs(); renderCaseLog(); });
   document.getElementById("teamSortSelect").addEventListener("change", function(){ state.teamSortMode=this.value; renderTeamContent(state.teamData); });
   document.getElementById("signOutBtn").addEventListener("click", function(){
     clearSession();
@@ -997,6 +1001,7 @@ function applyCaseFilter() {
   state.cases = filterCasesForCurrentScope(state.allRangeCases);
   state.priorCases = filterCasesForCurrentScope(state.allPriorRangeCases||[]);
   updateCaseSourceFilterOptions();
+  updateCaseLogAnalystFilterOptions();
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
   if (state.trendsLoaded) loadTrendsData();
 }
@@ -1061,6 +1066,21 @@ function updateCaseSourceFilterOptions(){
   var keep = sources.indexOf(state.caseSourceFilter) !== -1 ? state.caseSourceFilter : "all";
   state.caseSourceFilter = keep;
   sel.innerHTML = '<option value="all">All Sources</option>' + sources.map(function(s){ return '<option value="'+esc(s)+'">'+esc(s)+'</option>'; }).join("");
+  sel.value = keep;
+}
+
+// Detailed Case Log's own Analyst sub-filter — narrows within whatever
+// analysts are already visible under the current scope (the header
+// Analyst/Team/Role filters for supervisors, or just themselves for a
+// regular analyst). Same pattern as Detailed Time Log's own Analyst
+// sub-filter alongside the page-wide header one.
+function updateCaseLogAnalystFilterOptions(){
+  var sel = document.getElementById("caseLogAnalystFilterSelect");
+  if (!sel) return;
+  var analysts = [...new Set(state.cases.map(function(c){ return c.analyst; }).filter(function(a){ return a; }))].sort();
+  var keep = analysts.indexOf(state.caseLogAnalystFilter) !== -1 ? state.caseLogAnalystFilter : "all";
+  state.caseLogAnalystFilter = keep;
+  sel.innerHTML = '<option value="all">All Analysts</option>' + analysts.map(function(a){ return '<option value="'+esc(a)+'">'+esc(a)+'</option>'; }).join("");
   sel.value = keep;
 }
 
@@ -1196,6 +1216,7 @@ function computeCaseOutlierFlags(cases) {
 
 function getFilteredCaseLogRows(){
   var filtered = state.casePlatformFilter === "all" ? state.cases : state.cases.filter(function(c){ return c.platform === state.casePlatformFilter; });
+  if (state.caseLogAnalystFilter !== "all") filtered = filtered.filter(function(c){ return c.analyst === state.caseLogAnalystFilter; });
   if (state.caseSourceFilter !== "all") filtered = filtered.filter(function(c){ return c.source === state.caseSourceFilter; });
   var q = (state.caseSearchQuery||"").trim().toLowerCase();
   if (q) filtered = filtered.filter(function(c){ return String(c.case_id||"").toLowerCase().indexOf(q)!==-1; });
