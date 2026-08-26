@@ -970,6 +970,8 @@ function loadMonths() {
   });
 }
 
+function formatMonthLabel(key){ var p=key.split("-"); return new Date(parseInt(p[0]),parseInt(p[1])-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"}); }
+
 // ============================================================
 // CASE PERIOD — now driven entirely by the unified period control above
 // (getPeriodBounds/periodLabel/fetchDashboardData). formatDateRangeDisplay
