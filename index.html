@@ -66,6 +66,7 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .header-greeting{color:rgba(255,255,255,.9);font-size:.95rem;font-weight:500;margin-top:.6rem;}
 .filter-bar-card .header-filters{margin-top:0;margin-bottom:.75rem;}
 .filter-bar-card .header-filters select{flex:1 1 180px;min-width:160px;}
+.period-desc-emphasis{text-align:center;font-size:1rem;font-weight:700;color:var(--text);margin:.85rem 0 0;padding-top:.85rem;border-top:1px solid var(--border);}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem;}
 .stats-grid-centered{display:flex;flex-wrap:wrap;justify-content:center;gap:1rem;margin-bottom:1.5rem;}
 .stats-grid-centered .stat-card{flex:0 1 200px;min-width:180px;}
@@ -239,19 +240,21 @@ textarea{resize:vertical;min-height:80px;}
             <select id="teamFilterHeader" class="form-select"><option value="all">All Teams</option></select>
             <select id="roleFilterHeader" class="form-select"><option value="all">All Roles</option></select>
           </div>
-          <div class="platform-filter-row" id="periodControls" style="margin:0 0 .75rem"></div>
-          <div class="date-range-row" id="periodCustomRow" style="display:none;margin-bottom:.75rem">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
+            <div class="platform-filter-row" id="periodControls" style="margin:0"></div>
+            <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+              <select id="monthQuickJump" class="form-select" style="width:auto"><option value="">Jump to month…</option></select>
+              <select id="overviewActivityFilter" class="form-select" style="width:auto"><option value="all">All Activities</option></select>
+            </div>
+          </div>
+          <div class="date-range-row" id="periodCustomRow" style="display:none;margin-top:.75rem">
             <label>Custom range:</label>
             <input type="date" id="periodCustomStart" class="date-input"/>
             <span style="color:var(--text-muted)">to</span>
             <input type="date" id="periodCustomEnd" class="date-input"/>
             <button class="btn btn-primary btn-sm" onclick="applyPeriodCustom()">Apply</button>
           </div>
-          <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
-            <select id="monthQuickJump" class="form-select" style="width:auto"><option value="">Jump to month…</option></select>
-            <select id="overviewActivityFilter" class="form-select" style="width:auto"><option value="all">All Activities</option></select>
-          </div>
-          <p id="periodDesc" style="font-size:.8rem;color:var(--text-muted);margin:.6rem 0 0"></p>
+          <p id="periodDesc" class="period-desc-emphasis"></p>
         </div>
       </div>
       <div class="stats-grid" id="statsGrid"></div>
@@ -930,14 +933,34 @@ function fetchDashboardData() {
 }
 
 // Populates the month quick-jump dropdown only — no longer triggers its
-// own fetch (fetchDashboardData() owns the actual data load now).
+// own fetch (fetchDashboardData() owns the actual data load now). Shows an
+// explicit "Loading months…" state while the request is in flight and a
+// clear "No history yet" state if it comes back empty, rather than leaving
+// the generic "Jump to month…" placeholder sitting there either way —
+// that ambiguity made it impossible to tell "still loading" apart from
+// "genuinely nothing to show" apart from "something's broken."
 function loadMonths() {
   var sel = document.getElementById("monthQuickJump");
-  sel.innerHTML = '<option value="">Jump to month…</option>';
+  sel.disabled = true;
+  sel.innerHTML = '<option value="">Loading months…</option>';
   apiGet("getAvailableMonths").then(function(months) {
-    if (!months||months.error||!months.length) return;
+    sel.disabled = false;
+    if (!months || months.error) {
+      sel.innerHTML = '<option value="">Jump to month…</option>';
+      if (months && months.error) toast("error","Failed to load months: "+months.error);
+      return;
+    }
+    if (!months.length) {
+      sel.innerHTML = '<option value="">No history yet</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">Jump to month…</option>';
     months.forEach(function(m){ var o=document.createElement("option"); o.value=m; o.textContent=formatMonthLabel(m); sel.appendChild(o); });
-  }).catch(function(err){ toast("error","Failed to load months: "+err); });
+  }).catch(function(err){
+    sel.disabled = false;
+    sel.innerHTML = '<option value="">Jump to month…</option>';
+    toast("error","Failed to load months: "+err);
+  });
 }
 
 // ============================================================
