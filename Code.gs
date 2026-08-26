@@ -156,6 +156,14 @@ function doGet(e) {
       if (action === "getCaseEntriesWithPrior") {
         return jsonResponse(getCaseEntriesWithPrior(params.start, params.end, params.priorStart, params.priorEnd));
       }
+      // Full dashboard payload (entries + cases + prior-period cases) in
+      // ONE call — the dashboard used to fire a separate request for time
+      // entries (bound to the Reporting Period month) and cases (bound to
+      // its own case-period control). Now that a single period drives the
+      // whole Dashboard view, this combines both into one round trip.
+      if (action === "getDashboardData") {
+        return jsonResponse(getDashboardData(params.start, params.end, params.priorStart, params.priorEnd));
+      }
       if (action === "getTeamData") {
         return jsonResponse(getTeamData(params.start, params.end));
       }
@@ -500,6 +508,25 @@ function getCaseEntriesWithPrior(startDate, endDate, priorStart, priorEnd) {
     return {
       current: _readAllCases(startDate, endDate),
       prior:   _readAllCases(priorStart, priorEnd)
+    };
+  } catch(e) { return { error: e.toString() }; }
+}
+
+// Combined payload for the unified Dashboard period control — time entries
+// for the current range, cases for the current range, and cases for the
+// prior range (for the case tiles' delta arrows), all in one execution.
+// getTimeEntries() and _readAllCases() each still go through their own
+// cache domain ("entries" / "cases" respectively — see the CACHING block up
+// top), so this doesn't change what's cached, just how many separate HTTP
+// round trips the dashboard needs to make to get it.
+function getDashboardData(startDate, endDate, priorStart, priorEnd) {
+  try {
+    var entries = getTimeEntries(startDate, endDate);
+    if (entries && entries.error) return { error: entries.error };
+    return {
+      entries: entries,
+      cases: _readAllCases(startDate, endDate),
+      priorCases: _readAllCases(priorStart, priorEnd)
     };
   } catch(e) { return { error: e.toString() }; }
 }
