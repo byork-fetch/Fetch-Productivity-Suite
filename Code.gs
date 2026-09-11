@@ -1,6 +1,6 @@
 // ============================================================
 // PI PRODUCTIVITY SUITE — Google Apps Script Backend
-// Code.gs — v3.9 (GitHub Pages / fetch() compatible)
+// Code.gs — v4.1 (GitHub Pages / fetch() compatible)
 // ============================================================
 // All data reads now go through doGet with ?action=... params.
 // The dashboard is hosted on GitHub Pages and calls this
@@ -737,11 +737,12 @@ function debugAuth() {
 // AUTOMATED WEEKLY EMAIL DIGEST — admin-only opt-in list of recipients,
 // stored in the digest_recipients sheet. A time-driven trigger (created
 // automatically the first time someone is added, so no manual Apps Script
-// setup is needed) fires sendWeeklyDigest() every Saturday in the 10 PM
-// hour, which reads the recipient list fresh and mails a summary of the
-// current Sun–Sat week to everyone on it. Empty recipient list = trigger
-// still fires but sends nothing, which is harmless and self-correcting
-// once someone's added.
+// setup is needed) fires sendWeeklyDigest() every Monday in the 7 AM hour,
+// which reads the recipient list fresh and mails a summary of the most
+// recently completed Sun–Sat week (last Sunday through last Saturday, not
+// the week that's just starting) to everyone on it. Empty recipient list =
+// trigger still fires but sends nothing, which is harmless and
+// self-correcting once someone's added.
 // ============================================================
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email||"").trim());
@@ -805,21 +806,25 @@ function removeDigestRecipient(email, callerEmail) {
   } catch(e) { return { error: e.toString() }; }
 }
 
-// Creates the Saturday 10 PM(ish) trigger exactly once — checked by handler
-// function name so re-adding recipients later never creates duplicates.
-// atHour(22) fires somewhere in the 22:00–23:00 window (Apps Script's
-// time-based triggers are approximate, not to-the-minute), in the script's
-// own timezone (Session.getScriptTimeZone()), which satisfies "Saturday
-// after 10 PM" without needing an exact-minute guarantee.
+// Creates the Monday ~7 AM trigger exactly once — checked by handler
+// function name, and any existing sendWeeklyDigest trigger is removed
+// first so re-running this (e.g. after this schedule change, or from
+// re-adding a recipient later) never leaves two competing digest triggers
+// around, whether the old one was this Monday schedule or the prior
+// Saturday one. atHour(7) fires somewhere in the 7:00–8:00 AM window
+// (Apps Script's time-based triggers are approximate, not to-the-minute),
+// in the script's own timezone (Session.getScriptTimeZone()).
 function ensureDigestTriggerExists() {
   var triggers = ScriptApp.getProjectTriggers();
   for (var i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === "sendWeeklyDigest") return; // already set up
+    if (triggers[i].getHandlerFunction() === "sendWeeklyDigest") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
   }
   ScriptApp.newTrigger("sendWeeklyDigest")
     .timeBased()
-    .onWeekDay(ScriptApp.WeekDay.SATURDAY)
-    .atHour(22)
+    .onWeekDay(ScriptApp.WeekDay.MONDAY)
+    .atHour(7)
     .create();
 }
 
@@ -967,10 +972,14 @@ function getCaseTrends(weeksBack, analystFilter) {
 }
 
 // Case volume + avg AHT for each of the last `weeksBack` Sunday-start weeks,
-// oldest first, ending with the current (possibly partial) week. Used for
-// the digest's week-over-week trend table.
-function _digestGetWeeklyStats(weeksBack) {
-  var now = new Date();
+// oldest first, ending with the week containing (or, for a fully closed
+// week, ending on) `asOfDate`. `asOfDate` defaults to now for other
+// callers; sendWeeklyDigest passes the reporting week's Saturday so the
+// most recent row here lines up with the digest's own (now always fully
+// complete) reporting week instead of whatever week the script happens to
+// be running in.
+function _digestGetWeeklyStats(weeksBack, asOfDate) {
+  var now = asOfDate || new Date();
   var thisWeekStart = _digestGetWeekStart(now);
   var weeks = [];
   for (var i = weeksBack - 1; i >= 0; i--) {
@@ -1066,8 +1075,8 @@ function _digestSummarizeIdleGaps(entries) {
 
 // This-week vs prior-full-week avg AHT per platform, for the "vs last week"
 // arrows on the By Platform table. Prior week is the last complete Sun–Sat
-// week before the digest's (possibly partial) current week, so a Tuesday
-// send is compared against a fair full week rather than another partial one.
+// week before the digest's reporting week, so the comparison is always
+// full-week-vs-full-week.
 function _digestComputePlatformTrend(weekStart, privileged) {
   var priorEnd = new Date(weekStart.getTime() - 86400000);
   var priorStart = new Date(priorEnd.getTime() - 6*86400000);
@@ -1085,7 +1094,7 @@ function _digestComputePlatformTrend(weekStart, privileged) {
   return result;
 }
 
-// The function the Saturday trigger actually calls. No callerEmail here —
+// The function the Monday trigger actually calls. No callerEmail here —
 // it runs unattended, so recipient-list access bypasses the admin-only
 // gate getDigestRecipients() normally enforces (there's no "caller" to
 // check) and reads the sheet directly instead.
@@ -1100,11 +1109,23 @@ function sendWeeklyDigest() {
     if (!recipients.length) return;
 
     var now = new Date();
-    var weekStart = _digestGetWeekStart(now);
-    var weekStartStr = _digestFormatDate(weekStart), todayStr = _digestFormatDate(now);
+    // REPORTING WEEK — since the trigger now fires Monday morning rather
+    // than Saturday night, "now" sits inside the week that's just
+    // starting, not the week we want to report on. thisWeekStart is that
+    // just-started week's Sunday; the actual reporting range is the FULL
+    // Sun–Sat week immediately before it, so every case and time entry
+    // from that week (including whatever happened after 10 PM last
+    // Saturday, which the old Saturday-night send always missed) is
+    // captured. weekStartStr/weekEndStr below are that closed week's
+    // bounds and are used for every query and every "this week" figure
+    // in the email — nothing here still reasons in terms of "today."
+    var thisWeekStart = _digestGetWeekStart(now);
+    var weekStart = new Date(thisWeekStart.getTime() - 7*86400000);
+    var weekEnd   = new Date(thisWeekStart.getTime() - 86400000);
+    var weekStartStr = _digestFormatDate(weekStart), weekEndStr = _digestFormatDate(weekEnd);
 
     var privileged = _digestGetPrivilegedNames();
-    var cases = _readAllCases(weekStartStr, todayStr).filter(function(c){ return !privileged[_digestNormName(c.analyst)]; });
+    var cases = _readAllCases(weekStartStr, weekEndStr).filter(function(c){ return !privileged[_digestNormName(c.analyst)]; });
     var byPlatform = { Kount:{count:0,ahtSecs:[]}, Zendesk:{count:0,ahtSecs:[]}, RADAR:{count:0,ahtSecs:[]} };
     var byAnalyst = {};
     cases.forEach(function(c){
@@ -1163,10 +1184,15 @@ function sendWeeklyDigest() {
       + '<a href="'+DASHBOARD_URL+'" style="display:inline-block;background:linear-gradient(90deg,#e35c3c 0%,#c23d6e 100%);color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 24px;border-radius:8px">Click here to review →</a>'
       + '</div>';
 
-    var weeklyStats = _digestGetWeeklyStats(4);
+    // Passing weekEnd (this reporting week's Saturday) as asOfDate anchors
+    // the 4-week trend table on the reporting week itself, instead of on
+    // whatever week the script happens to be running in (now Monday of
+    // the NEXT week). The most recent row is therefore always the same
+    // fully-complete week the rest of this email reports on.
+    var weeklyStats = _digestGetWeeklyStats(4, weekEnd);
     var trendRows = weeklyStats.map(function(w, idx){
       var deltaStr = "";
-      var isPartialCurrent = (idx === weeklyStats.length - 1) && (todayStr !== _digestFormatDate(new Date(weekStart.getTime()+6*86400000)));
+      var isPartialCurrent = (idx === weeklyStats.length - 1) && (weekEndStr !== _digestFormatDate(new Date(weekStart.getTime()+6*86400000)));
       if (idx > 0 && !isPartialCurrent) {
         var prev = weeklyStats[idx-1];
         var diff = w.count - prev.count;
@@ -1182,7 +1208,7 @@ function sendWeeklyDigest() {
 
     // Idle Time — ported from the dashboard's client-side idle-gap logic so
     // the digest can flag it without anyone opening the dashboard first.
-    var weekEntriesRaw = getTimeEntries(weekStartStr, todayStr);
+    var weekEntriesRaw = getTimeEntries(weekStartStr, weekEndStr);
     var weekEntries = (Array.isArray(weekEntriesRaw) ? weekEntriesRaw : []).filter(function(e){ return !privileged[_digestNormName(e.analyst)]; });
     var idleSummary = _digestSummarizeIdleGaps(weekEntries);
     var idleSection = "";
@@ -1203,7 +1229,7 @@ function sendWeeklyDigest() {
     var html = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Arial,sans-serif;color:#222;max-width:560px;margin:0 auto">'
       + '<div style="'+gradientBg+';border-radius:14px 14px 0 0;padding:24px 24px 20px">'
       +   '<h1 style="color:#fff;font-size:19px;font-weight:700;margin:0 0 4px">PI Productivity Suite, Weekly Digest</h1>'
-      +   '<p style="color:rgba(255,255,255,.85);font-size:13px;margin:0">'+weekStartStr+' – '+todayStr+' · '+totalCases+' total cases</p>'
+      +   '<p style="color:rgba(255,255,255,.85);font-size:13px;margin:0">'+weekStartStr+' – '+weekEndStr+' · '+totalCases+' total cases</p>'
       + '</div>'
       + '<div style="border:1px solid #eee;border-top:none;border-radius:0 0 14px 14px;padding:20px 24px 24px">'
       + attentionBanner
@@ -1217,13 +1243,13 @@ function sendWeeklyDigest() {
       + idleSection
       + '<h3 style="margin:22px 0 6px;font-size:14px;color:#333">Top Analysts This Week</h3>'
       + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>' + topRows + '</tbody></table>'
-      + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Saturday.</p>'
+      + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Monday.</p>'
       + '</div>'
       + '</div>';
 
     MailApp.sendEmail({
       to: recipients.join(","),
-      subject: "PI Productivity Suite, Weekly Digest (" + weekStartStr + " – " + todayStr + ")",
+      subject: "PI Productivity Suite, Weekly Digest (" + weekStartStr + " – " + weekEndStr + ")",
       htmlBody: html
     });
   } catch(e) {
