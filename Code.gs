@@ -700,6 +700,47 @@ function markFlagReviewed(flagKey, analyst, message, callerEmail) {
   } catch(e) { return { error: e.toString() }; }
 }
 
+// Bulk version of markFlagReviewed() — accepts an array of
+// { flagKey, analyst, message } objects and writes them all in a SINGLE
+// setValues() call, instead of the dashboard firing one doPost per flag.
+// This exists specifically because rapid consecutive individual
+// markFlagReviewed calls (e.g. someone selecting and clearing a long
+// Needs Attention list) can pile up enough simultaneous executions to trip
+// Apps Script's per-user concurrent-execution limit, which serves an HTML
+// error page instead of JSON. One bulk call removes that failure mode
+// entirely for the "mark selected/all as reviewed" case.
+function markFlagsReviewed(flags, callerEmail) {
+  try {
+    if (!flags || !flags.length) return { success: true, marked: 0, skipped: 0 };
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = getOrCreateSheet(ss, SHEET_ATTENTION_REVIEWS);
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(["flag_key","analyst","message","reviewed_by","reviewed_at"]);
+      sheet.getRange(1,1,1,5).setFontWeight("bold"); sheet.setFrozenRows(1);
+    }
+    var existing = {};
+    if (sheet.getLastRow() > 1) {
+      sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().forEach(function(r){
+        if (r[0]) existing[String(r[0])] = true;
+      });
+    }
+    var now = new Date().toISOString();
+    var newRows = [];
+    var seenInThisBatch = {};
+    flags.forEach(function(f) {
+      var key = f && f.flagKey;
+      if (!key || existing[key] || seenInThisBatch[key]) return;
+      seenInThisBatch[key] = true;
+      newRows.push([key, (f.analyst || ""), (f.message || ""), callerEmail || "", now]);
+    });
+    if (newRows.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 5).setValues(newRows);
+      bumpCacheVersion("misc");
+    }
+    return { success: true, marked: newRows.length, skipped: flags.length - newRows.length };
+  } catch(e) { return { error: e.toString() }; }
+}
+
 // Restores an archived flag back into Needs Attention by deleting its row
 // in attention_reviews. Flags aren't stored entities in their own right —
 // they're recomputed fresh from entries/cases every load — so "restoring"
@@ -1273,6 +1314,9 @@ function doPost(e) {
       }
       if (payload.action === "markFlagReviewed") {
         return jsonResponse(markFlagReviewed(payload.flagKey, payload.analyst, payload.message, payload.callerEmail));
+      }
+      if (payload.action === "markFlagsReviewed") {
+        return jsonResponse(markFlagsReviewed(payload.flags, payload.callerEmail));
       }
       if (payload.action === "unmarkFlagReviewed") {
         return jsonResponse(unmarkFlagReviewed(payload.flagKey, payload.callerEmail));
