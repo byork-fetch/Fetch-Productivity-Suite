@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>PI Productivity Suite</title>
+<link rel="icon" type="image/webp" href="fraudteamlogo.webp">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
@@ -17,12 +18,6 @@
   --radius:0.75rem;
   --shadow-soft:0 4px 16px -2px hsl(355,75%,60%,0.15);
   --shadow-med:0 8px 24px -4px hsl(355,75%,60%,0.2);
-  /* Card-at-rest shadow — light mode's card bg (#fff) sits only ~2%
-     lightness above the page bg (98%), which reads as flat/melted-in
-     without real elevation. Dark mode intentionally sets this to none
-     below: a black shadow against an already-dark background just looks
-     muddy rather than lifted, and dark mode's cards already separate fine
-     via the card/bg lightness gap plus the colored left border. */
   --card-rest-shadow:0 1px 3px rgba(0,0,0,.09), 0 4px 14px rgba(0,0,0,.06);
 }
 .dark{--bg:hsl(0,0%,10%);--card:hsl(0,0%,14%);--border:hsl(0,0%,20%);--text:hsl(0,0%,95%);--text-muted:hsl(0,0%,60%);--muted-bg:hsl(0,0%,18%);--card-rest-shadow:none;}
@@ -119,16 +114,6 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .collapsible-content.open{display:block;}
 .attention-content.open{display:flex;flex-direction:column;gap:.5rem;}
 .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:.5rem;}
-/* Caps a table-wrap at roughly 30 data rows (header + 30 × ~37px row
-   height, matching this table's actual font-size/padding) before it
-   scrolls internally instead of pushing the rest of the page down. th
-   already has position:sticky;top:0 set — that was previously sticking to
-   the page/viewport since nothing established a local scroll container;
-   this gives it one, so the header now stays pinned while scrolling
-   inside the table itself. Applied only to the raw-log-style collapsibles
-   (Detailed Time Log, Idle Time Gaps, Detailed Case Log, Recently Edited)
-   — NOT the shared .table-wrap used by Users, Quick View, or Digest
-   Recipients, which have their own sizing already. */
 .table-wrap-scroll{max-height:1160px;overflow-y:auto;}
 table{width:100%;border-collapse:collapse;font-size:.83rem;min-width:700px;}
 thead{background:var(--muted-bg);}
@@ -204,11 +189,6 @@ textarea{resize:vertical;min-height:80px;}
 .toast.success{background:hsl(142,60%,40%);}.toast.error{background:hsl(0,70%,50%);}.toast.info{background:hsl(355,75%,55%);}
 @keyframes slideIn{from{opacity:0;transform:translateX(20px);}to{opacity:1;transform:none;}}
 ::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
-/* LOADING GLOW — pulsing border/shadow applied to the stat tiles, chart
-   cards, performance card, and case log while a period fetch is in flight
-   (see setDashboardLoadingVisual() in the script). Uses var(--primary) so
-   the glow color follows whatever theme palette is active, same as every
-   other themed element on the page. */
 @keyframes casesLoadingPulse{
   0%,100%{ box-shadow:0 0 0 0 transparent; }
   50%{ box-shadow:0 0 0 3px var(--primary); }
@@ -560,13 +540,6 @@ var state = {
   selectedAnalyst:"all", sortField:"date", sortDir:"desc",
   caseSortField:"date", caseSortDir:"desc", editEntry:null,
   casePlatformFilter:"all", caseSourceFilter:"all", caseLogAnalystFilter:"all",
-  // UNIFIED PERIOD — one control (Today/Yesterday/This Week/30/60/90/Custom)
-  // now drives everything on the Dashboard view: the top stat tiles, case
-  // tiles, Time by Task, Analyst Logged Time, Detailed Time Log, and
-  // Detailed Case Log. Replaces the old split between a Reporting Period
-  // month selector (time entries) and a separate case-period control
-  // (cases) — those used to drift independently, which is what made
-  // "why doesn't Time by Task match the case tiles" a real question.
   periodMode:"week", periodCustomStart:null, periodCustomEnd:null, periodLoading:false,
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null, selectedRole:null, teamSortMode:"name",
   assignments:[], analystTeamMap:{}, analystRoleMap:{}, hiddenAssignmentNames:{},
@@ -575,6 +548,7 @@ var state = {
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
   overviewActivityFilter:"all", privilegedNames:{},
   reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null, archivedFlags:[],
+  attentionSelectedKeys:{},
   taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, themeId:"fetch", usersList:[]
 };
 
@@ -798,13 +772,7 @@ function setGreeting() {
 }
 
 // ============================================================
-// UNIFIED PERIOD CONTROL — Today/Yesterday/This Week/30/60/90/Custom,
-// plus a "jump to month" shortcut. Replaces the old split between a
-// Reporting Period month selector (drove Time by Task/Analyst Logged
-// Time/Detailed Time Log) and a separate case-period control (drove the
-// case tiles/Cases by Platform/Case Performance/Detailed Case Log) — those
-// used to be two independent clocks that could show different windows at
-// the same time. Now one control drives the whole Dashboard view.
+// UNIFIED PERIOD CONTROL
 // ============================================================
 function getPeriodBounds() {
   var now = new Date();
@@ -814,7 +782,6 @@ function getPeriodBounds() {
   if (state.periodMode === "30d") { return { start:formatDate(new Date(now.getTime()-29*86400000)), end:formatDate(now) }; }
   if (state.periodMode === "60d") { return { start:formatDate(new Date(now.getTime()-59*86400000)), end:formatDate(now) }; }
   if (state.periodMode === "90d") { return { start:formatDate(new Date(now.getTime()-89*86400000)), end:formatDate(now) }; }
-  // custom
   var s = state.periodCustomStart || formatDate(now), e = state.periodCustomEnd || formatDate(now);
   return { start:s, end:e };
 }
@@ -828,11 +795,9 @@ function periodLabel() {
   if (state.periodMode === "30d")       return "Last 30 Days · " + rangeStr;
   if (state.periodMode === "60d")       return "Last 60 Days · " + rangeStr;
   if (state.periodMode === "90d")       return "Last 90 Days · " + rangeStr;
-  return rangeStr; // custom — just the range itself
+  return rangeStr;
 }
 
-// The immediately-preceding period of the same length, used for the
-// period-over-period delta indicators on the case stat cards.
 function getPriorPeriodBounds(bounds) {
   var start = new Date(bounds.start+"T00:00:00"), end = new Date(bounds.end+"T00:00:00");
   var dayCount = Math.round((end.getTime()-start.getTime())/86400000) + 1;
@@ -869,7 +834,7 @@ function setPeriod(mode) {
       startInput.value = formatDate(new Date(now.getTime() - 6*86400000));
       endInput.value = formatDate(now);
     }
-    return; // wait for Apply
+    return;
   }
   fetchDashboardData();
 }
@@ -883,12 +848,6 @@ function applyPeriodCustom() {
   fetchDashboardData();
 }
 
-// The month quick-jump dropdown is really just a fast way to fill in a
-// Custom range with a full calendar month's bounds — it doesn't add a
-// seventh independent mode, it sets Custom to that month so there's only
-// ever one "currently active" way to read the period (the Custom button
-// lighting up), instead of two controls that could each claim to be "the"
-// active one at the same time.
 function setPeriodFromMonthJump(monthKey) {
   if (!monthKey) return;
   var p = monthKey.split("-"), year=parseInt(p[0],10), month=parseInt(p[1],10);
@@ -901,10 +860,6 @@ function setPeriodFromMonthJump(monthKey) {
   fetchDashboardData();
 }
 
-// Marks the case tiles/chart/table area — and now the top stat tiles too,
-// since one period drives both — as "refreshing" via a pulsing glow border
-// instead of wiping their content. Keeps the last-known numbers visible
-// while a fetch is in flight rather than flashing to blank on every switch.
 function setDashboardLoadingVisual(loading) {
   var targets = [];
   document.querySelectorAll('#statsGrid .stat-card').forEach(function(c){ targets.push(c); });
@@ -923,13 +878,11 @@ function setDashboardLoadingVisual(loading) {
   if (logBody) logBody.closest('.table-wrap').classList.toggle('cases-loading-pulse', loading);
 }
 
-// Single combined fetch (entries + cases + prior-period cases) driving the
-// entire Dashboard view — see getDashboardData() in Code.gs.
 function fetchDashboardData() {
   var b = getPeriodBounds();
   var pb = getPriorPeriodBounds(b);
   state.periodLoading = true;
-  renderPeriodControls(); // disables the period buttons for the duration of this fetch
+  renderPeriodControls();
   document.getElementById("periodDesc").textContent = "Loading data for " + periodLabel() + "…";
   setDashboardLoadingVisual(true);
   apiGet("getDashboardData",{start:b.start,end:b.end,priorStart:pb.start,priorEnd:pb.end}).then(function(result){
@@ -954,13 +907,6 @@ function fetchDashboardData() {
   });
 }
 
-// Populates the month quick-jump dropdown only — no longer triggers its
-// own fetch (fetchDashboardData() owns the actual data load now). Shows an
-// explicit "Loading months…" state while the request is in flight and a
-// clear "No history yet" state if it comes back empty, rather than leaving
-// the generic "Jump to month…" placeholder sitting there either way —
-// that ambiguity made it impossible to tell "still loading" apart from
-// "genuinely nothing to show" apart from "something's broken."
 function loadMonths() {
   var sel = document.getElementById("monthQuickJump");
   sel.disabled = true;
@@ -987,11 +933,6 @@ function loadMonths() {
 
 function formatMonthLabel(key){ var p=key.split("-"); return new Date(parseInt(p[0]),parseInt(p[1])-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"}); }
 
-// ============================================================
-// CASE PERIOD — now driven entirely by the unified period control above
-// (getPeriodBounds/periodLabel/fetchDashboardData). formatDateRangeDisplay
-// is still used by periodLabel() to render the concrete date span.
-// ============================================================
 function formatDateRangeDisplay(startStr, endStr) {
   var s = new Date(startStr+"T00:00:00"), e = new Date(endStr+"T00:00:00");
   var opts = {month:"short", day:"numeric"};
@@ -1017,9 +958,6 @@ function applyCaseFilter() {
   if (state.trendsLoaded) loadTrendsData();
 }
 
-// ============================================================
-// CASE TRENDS
-// ============================================================
 function toggleTrendsSection(){
   toggleCollapsible('trends');
   var content = document.getElementById('trendsContent');
@@ -1080,11 +1018,6 @@ function updateCaseSourceFilterOptions(){
   sel.value = keep;
 }
 
-// Detailed Case Log's own Analyst sub-filter — narrows within whatever
-// analysts are already visible under the current scope (the header
-// Analyst/Team/Role filters for supervisors, or just themselves for a
-// regular analyst). Same pattern as Detailed Time Log's own Analyst
-// sub-filter alongside the page-wide header one.
 function updateCaseLogAnalystFilterOptions(){
   var sel = document.getElementById("caseLogAnalystFilterSelect");
   if (!sel) return;
@@ -1141,12 +1074,6 @@ function renderCaseStats() {
   var pka=ahtFromCases(prior.filter(function(c){return c.platform==='Kount';}));
   var pza=ahtFromCases(prior.filter(function(c){return c.platform==='Zendesk';}));
   var pra=ahtFromCases(prior.filter(function(c){return c.platform==='RADAR';}));
-  // Bulk-marked cases (RADAR grid actions with no individual open/close
-  // pair to time) are excluded from the AHT average above just like any
-  // other untimed case — but silently excluding them with no count shown
-  // made it look like they'd simply vanished. Surfacing the count here
-  // keeps the "denominator is smaller than the platform total" visible
-  // and explained, instead of a mystery.
   function bulkCount(cases){ return cases.filter(function(c){ return c.timing_method==="bulk" && !(c.handle_seconds>0); }).length; }
   var kBulk=bulkCount(kc), zBulk=bulkCount(zc), rBulk=bulkCount(rc);
   function ahtSub(aht, bulk){
@@ -1266,23 +1193,10 @@ function sortCaseTable(field){state.caseSortDir=state.caseSortField===field?(sta
 
 function ahtFromCases(cases){var d=cases.filter(function(c){return typeof c.handle_seconds==="number"&&c.handle_seconds>0;}).map(function(c){return c.handle_seconds;});if(!d.length)return{avgSec:null,count:0};return{avgSec:Math.round(d.reduce(function(a,b){return a+b;},0)/d.length),count:d.length};}
 function fmtSeconds(sec){if(sec==null||!isFinite(sec)||sec<=0)return"—";var m=Math.floor(sec/60),s=Math.round(sec%60);return m<=0?s+"s":m+"m "+String(s).padStart(2,"0")+"s";}
-// Wraps fmtSeconds() for case rows specifically — a null handle_seconds on
-// a case flagged timing_method:"bulk" is an EXPECTED gap (RADAR bulk-mark
-// actions never have an individual open/close pair to time), not a data
-// problem. Showing "Bulk" there instead of the same bare "—" used for a
-// genuinely missing/unexplained time keeps those two very different
-// situations visually distinct instead of indistinguishable.
 function fmtHandleTime(c){
   if ((c.handle_seconds==null || !(c.handle_seconds>0)) && c.timing_method==="bulk") return "Bulk";
   return fmtSeconds(c.handle_seconds);
 }
-// HTML-table version of fmtHandleTime() — wraps "Bulk" with a tooltip
-// carrying the fuller, more honest explanation (a bulk-processed case is
-// the most likely cause, but it's not the only possible one — a case
-// reviewed by copy/pasting the ID into a separate tab produces the exact
-// same untimed result). Keeps the visible label short and scannable while
-// not overclaiming certainty for anyone who checks. fmtHandleTime() itself
-// stays plain text for the CSV export, where a tooltip has nowhere to go.
 function renderHandleTimeCell(c){
   var txt = fmtHandleTime(c);
   if (txt === "Bulk") {
@@ -1463,6 +1377,7 @@ function loadTeamData(){
     state.reviewedFlagKeys={};
     (Array.isArray(reviewed)?reviewed:[]).forEach(function(k){ state.reviewedFlagKeys[k]=true; });
     state.archivedFlags = (isAdminUser() && Array.isArray(archived)) ? archived : [];
+    state.attentionSelectedKeys = {};
     state.teamData=data;if(!state.teamData.cases)state.teamData.cases=[];
     var analysts=[...new Set(data.entries.map(function(e){return e.analyst;}))].sort();
     var tasks=[...new Set(data.entries.map(function(e){return e.task;}))].sort();
@@ -1538,12 +1453,6 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
     });
   });
 
-  // RADAR SLOW CASE — a single RADAR case with a genuine (non-null,
-  // non-zero) handle time of 5+ minutes. Unlike the two flag types above,
-  // this is per-CASE rather than per-analyst-pattern, so its key includes
-  // the case_id — each slow case gets its own flag, reviewable/archivable
-  // independently of any others on the same day. RADAR-only per current
-  // scope; Kount/Zendesk aren't included.
   var RADAR_SLOW_CASE_THRESHOLD_SEC = 300; // 5 minutes
   cases.forEach(function(c){
     if (c.platform !== "RADAR") return;
@@ -1558,6 +1467,18 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
   return flags;
 }
 
+// Multi-select support for the Needs Attention list — see
+// toggleAttentionFlagSelection()/markSelectedAttentionReviewed()/
+// markAllAttentionReviewed() below. Each flag row now has its own
+// checkbox alongside the existing per-row ✓ button (left untouched, still
+// calls the single markFlagReviewed action). A toolbar above the list
+// gives "Select all" plus "Mark Selected" / "Mark All" buttons, which both
+// route through the new markFlagsReviewed bulk endpoint — ONE request no
+// matter how many flags are checked, instead of one request per flag. That
+// matters specifically because firing many rapid individual
+// markFlagReviewed calls back-to-back (e.g. clearing a long list quickly)
+// can trip Apps Script's per-user concurrent-execution limit, which serves
+// an HTML error page instead of JSON.
 function renderAttentionBanner(assignments, entries, cases) {
   var el = document.getElementById("attentionBanner");
   if (!el) return;
@@ -1565,13 +1486,39 @@ function renderAttentionBanner(assignments, entries, cases) {
   var flags = computeAttentionFlags(assignments, entries, cases).filter(function(f){ return !state.reviewedFlagKeys[f.key]; });
   state.attentionFlagsByKey = {};
   flags.forEach(function(f){ state.attentionFlagsByKey[f.key] = f; });
+
+  // Drop any selected keys that no longer correspond to a visible flag
+  // (e.g. after a reload, or after some of them were just marked reviewed).
+  var keptSelected = {};
+  Object.keys(state.attentionSelectedKeys).forEach(function(k){ if (state.attentionFlagsByKey[k]) keptSelected[k] = true; });
+  state.attentionSelectedKeys = keptSelected;
+
   if (!flags.length) { el.innerHTML = ""; return; }
+
+  var selectedCount = Object.keys(state.attentionSelectedKeys).length;
+  var allSelected = flags.length > 0 && flags.every(function(f){ return state.attentionSelectedKeys[f.key]; });
+
+  var toolbar = '<div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap;padding:.15rem 0 .6rem">'
+    + '<label style="display:flex;align-items:center;gap:.45rem;font-size:.8rem;cursor:pointer;color:var(--text-muted)">'
+    + '<input type="checkbox" id="attentionSelectAll"'+(allSelected?' checked':'')+' onchange="toggleSelectAllAttention(this.checked)"> Select all'
+    + '</label>'
+    + '<span style="display:flex;gap:.5rem;flex-wrap:wrap">'
+    + '<button class="btn btn-outline btn-sm" onclick="markSelectedAttentionReviewed()"'+(selectedCount?'':' disabled')+'>✓ Mark Selected'+(selectedCount?' ('+selectedCount+')':'')+'</button>'
+    + '<button class="btn btn-outline btn-sm" onclick="markAllAttentionReviewed()">✓✓ Mark All Reviewed ('+flags.length+')</button>'
+    + '</span>'
+    + '</div>';
+
   el.innerHTML = '<div class="collapsible" style="border-left:4px solid hsl(45,90%,45%);margin-bottom:1.25rem">'
     + '<button class="collapsible-trigger open" onclick="toggleCollapsible(\'attention\')"><span>⚠️ Needs Attention ('+flags.length+')</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>'
     + '<div class="collapsible-content attention-content open" id="attentionContent">'
+    + toolbar
     + flags.map(function(f){
+        var checked = state.attentionSelectedKeys[f.key] ? ' checked' : '';
         return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.5rem .75rem;background:var(--muted-bg);border-radius:.5rem">'
+          + '<label style="display:flex;align-items:center;gap:.6rem;flex:1;min-width:200px;cursor:pointer">'
+          + '<input type="checkbox" class="attention-flag-checkbox"'+checked+' onchange="toggleAttentionFlagSelection(\''+esc(f.key)+'\', this.checked)">'
           + '<span style="font-size:.85rem"><strong>'+esc(f.analyst)+'</strong> — '+esc(f.message)+'</span>'
+          + '</label>'
           + '<span style="display:flex;gap:.4rem;flex-shrink:0">'
           + '<button class="btn btn-outline btn-sm" onclick="viewAnalystDetail(\''+esc(f.analyst)+'\')">View</button>'
           + '<button class="btn btn-outline btn-sm" data-tooltip="Mark reviewed" onclick="markAttentionReviewed(\''+esc(f.key)+'\')" style="color:hsl(142,60%,40%);font-weight:700">✓</button>'
@@ -1581,6 +1528,51 @@ function renderAttentionBanner(assignments, entries, cases) {
     + '</div></div>';
 }
 
+function toggleSelectAllAttention(checked){
+  if (checked) {
+    Object.keys(state.attentionFlagsByKey).forEach(function(k){ state.attentionSelectedKeys[k] = true; });
+  } else {
+    state.attentionSelectedKeys = {};
+  }
+  var args = state.lastAttentionArgs || {};
+  renderAttentionBanner(args.assignments, args.entries, args.cases);
+}
+
+function toggleAttentionFlagSelection(key, checked){
+  if (checked) state.attentionSelectedKeys[key] = true;
+  else delete state.attentionSelectedKeys[key];
+  // Just flip the toolbar counts/select-all state — no need to rebuild
+  // every row (and lose focus) for a single checkbox click.
+  var args = state.lastAttentionArgs || {};
+  renderAttentionBanner(args.assignments, args.entries, args.cases);
+}
+
+function markSelectedAttentionReviewed(){
+  var keys = Object.keys(state.attentionSelectedKeys).filter(function(k){ return state.attentionFlagsByKey[k]; });
+  if (!keys.length) { toast("error","No flags selected"); return; }
+  var flagsPayload = keys.map(function(k){
+    var f = state.attentionFlagsByKey[k];
+    return { flagKey: k, analyst: f.analyst, message: f.message };
+  });
+  apiPost({action:"markFlagsReviewed", flags:flagsPayload, callerEmail:state.user.email})
+    .then(function(res){
+      if (res && res.error) { toast("error", res.error); return; }
+      keys.forEach(function(k){ state.reviewedFlagKeys[k] = true; delete state.attentionSelectedKeys[k]; });
+      var args = state.lastAttentionArgs || {};
+      renderAttentionBanner(args.assignments, args.entries, args.cases);
+      var marked = (res && res.marked != null) ? res.marked : keys.length;
+      toast("success","Marked "+marked+" flag"+(marked===1?"":"s")+" reviewed");
+    })
+    .catch(function(err){ toast("error","Failed: "+err); });
+}
+
+function markAllAttentionReviewed(){
+  var keys = Object.keys(state.attentionFlagsByKey);
+  if (!keys.length) return;
+  keys.forEach(function(k){ state.attentionSelectedKeys[k] = true; });
+  markSelectedAttentionReviewed();
+}
+
 function markAttentionReviewed(key){
   var f = state.attentionFlagsByKey && state.attentionFlagsByKey[key];
   if (!f) return;
@@ -1588,6 +1580,7 @@ function markAttentionReviewed(key){
     .then(function(res){
       if (res && res.error) { toast("error", res.error); return; }
       state.reviewedFlagKeys[key] = true;
+      delete state.attentionSelectedKeys[key];
       var args = state.lastAttentionArgs || {};
       renderAttentionBanner(args.assignments, args.entries, args.cases);
       toast("success","Marked reviewed");
@@ -1642,6 +1635,7 @@ function renderTeamContent(data){
     document.getElementById("attentionBanner").innerHTML = "";
     document.getElementById("archivedBanner").innerHTML = "";
     state.attentionFlagsByKey = {};
+    state.attentionSelectedKeys = {};
     state.lastAttentionArgs = null;
   }
   if(!visibleAssignments.length){document.getElementById("teamContent").innerHTML='<div class="card"><div class="empty" style="padding:3rem">No team assignments found</div></div>';return;}
