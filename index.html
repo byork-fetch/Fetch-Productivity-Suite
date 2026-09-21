@@ -343,25 +343,29 @@ textarea{resize:vertical;min-height:80px;}
         <div><h2 style="font-size:1.5rem;font-weight:700">👥 Team Directory</h2><p style="font-size:.85rem;color:var(--text-muted)">Analyst performance within selected date range</p></div>
         <button class="btn btn-outline btn-sm" id="digestBtn" style="display:none" onclick="openDigestModal()">📧 Looking for automated reporting via email?</button>
       </div>
-      <div class="platform-filter-row" id="teamPeriodControls" style="margin-bottom:.75rem"></div>
-      <div class="date-range-row" id="teamCustomRow" style="display:none">
-        <label>Date Range:</label><input type="date" id="teamStartDate" class="date-input"/><span style="color:var(--text-muted)">to</span><input type="date" id="teamEndDate" class="date-input"/><button class="btn btn-primary btn-sm" onclick="loadTeamData()">Apply</button>
+      <div class="card filter-bar-card" style="margin-bottom:1.5rem">
+        <div class="card-body" style="display:flex;flex-direction:column;align-items:center;gap:1rem">
+          <div class="platform-filter-row" id="teamPeriodControls" style="margin:0;justify-content:center"></div>
+          <div class="date-range-row" id="teamCustomRow" style="display:none;margin:0;justify-content:center">
+            <label>Date Range:</label><input type="date" id="teamStartDate" class="date-input"/><span style="color:var(--text-muted)">to</span><input type="date" id="teamEndDate" class="date-input"/><button class="btn btn-primary btn-sm" onclick="loadTeamData()">Apply</button>
+          </div>
+          <div id="supervisorFilters" class="tabs" style="margin:0;justify-content:center"></div>
+          <div id="roleFilters" class="tabs" style="margin:0;justify-content:center"></div>
+          <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;justify-content:center">
+            <label style="font-size:.82rem;font-weight:600;color:var(--text-muted)">Sort by:</label>
+            <select id="teamSortSelect" class="form-select" style="width:auto">
+              <option value="name">Name (A–Z)</option>
+              <option value="aht_asc">AHT (fastest first)</option>
+              <option value="aht_desc">AHT (slowest first)</option>
+              <option value="util_desc">Utilization (highest first)</option>
+              <option value="util_asc">Utilization (lowest first)</option>
+              <option value="cases_desc">Cases (most first)</option>
+              <option value="cases_asc">Cases (fewest first)</option>
+            </select>
+          </div>
+        </div>
       </div>
-      <div id="supervisorFilters" class="tabs" style="margin-bottom:1rem"></div>
-      <div id="roleFilters" class="tabs" style="margin-bottom:1rem"></div>
-      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">
-        <label style="font-size:.82rem;font-weight:600;color:var(--text-muted)">Sort by:</label>
-        <select id="teamSortSelect" class="form-select" style="width:auto">
-          <option value="name">Name (A–Z)</option>
-          <option value="aht_asc">AHT (fastest first)</option>
-          <option value="aht_desc">AHT (slowest first)</option>
-          <option value="util_desc">Utilization (highest first)</option>
-          <option value="util_asc">Utilization (lowest first)</option>
-          <option value="cases_desc">Cases (most first)</option>
-          <option value="cases_asc">Cases (fewest first)</option>
-        </select>
-      </div>
-      <div class="export-row">
+      <div class="export-row" style="justify-content:center">
         <button class="btn btn-outline btn-sm" onclick="toggleExportFilters()">🔧 Export Filters <span id="exportChevron">▼</span></button>
         <button class="btn btn-outline btn-sm" onclick="quickViewData()">👁 Quick View</button>
         <button class="btn btn-primary btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
