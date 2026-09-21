@@ -344,7 +344,7 @@ textarea{resize:vertical;min-height:80px;}
         <button class="btn btn-outline btn-sm" id="digestBtn" style="display:none" onclick="openDigestModal()">📧 Looking for automated reporting via email?</button>
       </div>
       <div class="platform-filter-row" id="teamPeriodControls" style="margin-bottom:.75rem"></div>
-      <div class="date-range-row" id="teamCustomRow">
+      <div class="date-range-row" id="teamCustomRow" style="display:none">
         <label>Date Range:</label><input type="date" id="teamStartDate" class="date-input"/><span style="color:var(--text-muted)">to</span><input type="date" id="teamEndDate" class="date-input"/><button class="btn btn-primary btn-sm" onclick="loadTeamData()">Apply</button>
       </div>
       <div id="supervisorFilters" class="tabs" style="margin-bottom:1rem"></div>
@@ -549,7 +549,7 @@ var state = {
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
   overviewActivityFilter:"all", privilegedNames:{},
   reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null, archivedFlags:[],
-  attentionSelectedKeys:{}, teamPeriodMode:"custom",
+  attentionSelectedKeys:{}, teamPeriodMode:"week",
   taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, themeId:"fetch", usersList:[]
 };
 
@@ -726,7 +726,12 @@ function bootWithUser(user) {
   document.getElementById("teamDirBtn").addEventListener("click", function(){
     var onTeamView = document.getElementById("view-team").style.display !== "none";
     if (onTeamView) { showView("dashboard"); }
-    else { showView("team"); renderTeamPeriodControls(); loadTeamData(); }
+    else {
+      showView("team");
+      renderTeamPeriodControls();
+      if (state.teamPeriodMode === "custom") loadTeamData();
+      else setTeamPeriod(state.teamPeriodMode);
+    }
   });
   document.getElementById("userMgmtBtn").addEventListener("click", function(){ showView("users"); loadUsers(); });
   document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
