@@ -343,7 +343,8 @@ textarea{resize:vertical;min-height:80px;}
         <div><h2 style="font-size:1.5rem;font-weight:700">👥 Team Directory</h2><p style="font-size:.85rem;color:var(--text-muted)">Analyst performance within selected date range</p></div>
         <button class="btn btn-outline btn-sm" id="digestBtn" style="display:none" onclick="openDigestModal()">📧 Looking for automated reporting via email?</button>
       </div>
-      <div class="date-range-row">
+      <div class="platform-filter-row" id="teamPeriodControls" style="margin-bottom:.75rem"></div>
+      <div class="date-range-row" id="teamCustomRow">
         <label>Date Range:</label><input type="date" id="teamStartDate" class="date-input"/><span style="color:var(--text-muted)">to</span><input type="date" id="teamEndDate" class="date-input"/><button class="btn btn-primary btn-sm" onclick="loadTeamData()">Apply</button>
       </div>
       <div id="supervisorFilters" class="tabs" style="margin-bottom:1rem"></div>
@@ -548,7 +549,7 @@ var state = {
   timeLogAnalystFilter:"all", timeLogActivityFilter:"all", caseSearchQuery:"",
   overviewActivityFilter:"all", privilegedNames:{},
   reviewedFlagKeys:{}, attentionFlagsByKey:{}, lastAttentionArgs:null, archivedFlags:[],
-  attentionSelectedKeys:{},
+  attentionSelectedKeys:{}, teamPeriodMode:"custom",
   taskChart:null, caseChart:null, trendsChart:null, trendsLoaded:false, trendsWeeks:[], isDark:false, themeId:"fetch", usersList:[]
 };
 
@@ -725,7 +726,7 @@ function bootWithUser(user) {
   document.getElementById("teamDirBtn").addEventListener("click", function(){
     var onTeamView = document.getElementById("view-team").style.display !== "none";
     if (onTeamView) { showView("dashboard"); }
-    else { showView("team"); loadTeamData(); }
+    else { showView("team"); renderTeamPeriodControls(); loadTeamData(); }
   });
   document.getElementById("userMgmtBtn").addEventListener("click", function(){ showView("users"); loadUsers(); });
   document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
@@ -1363,6 +1364,46 @@ function saveEdit(){
   apiPost({action:"updateTimeEntry",id:entry.id,updates:updates,callerEmail:state.user.email})
     .then(function(res){document.getElementById("saveEditBtn").disabled=false;document.getElementById("saveEditBtn").textContent="Save Changes";if(res.error){toast("error",res.error);return;}toast("success","Entry updated!");closeEditModal();fetchDashboardData();})
     .catch(function(err){document.getElementById("saveEditBtn").disabled=false;document.getElementById("saveEditBtn").textContent="Save Changes";toast("error","Failed: "+err);});
+}
+
+// Quick-select pill row for Team Directory (Today/Yesterday/This Week/
+// 30/60/90/Custom) — same pattern as the Dashboard's unified period
+// control above, but scoped to Team Directory's own teamStartDate/
+// teamEndDate inputs and loadTeamData(). "Custom" reveals those inputs
+// (and the Apply button) instead of computing a range itself; every other
+// pill fills them in and reloads immediately.
+function renderTeamPeriodControls() {
+  var opts = [["today","Today"],["yesterday","Yesterday"],["week","This Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
+  var html = opts.map(function(o){
+    return '<button class="platform-filter-btn'+(state.teamPeriodMode===o[0]?' active':'')+'" onclick="setTeamPeriod(\''+o[0]+'\')">'+o[1]+'</button>';
+  }).join("");
+  var el = document.getElementById("teamPeriodControls");
+  if (el) el.innerHTML = html;
+  var row = document.getElementById("teamCustomRow");
+  if (row) row.style.display = state.teamPeriodMode === "custom" ? "flex" : "none";
+}
+
+function setTeamPeriod(mode) {
+  state.teamPeriodMode = mode;
+  renderTeamPeriodControls();
+  if (mode === "custom") return; // wait for the user to hit Apply
+  var now = new Date(), start, end = now;
+  if (mode === "today") {
+    start = now;
+  } else if (mode === "yesterday") {
+    start = new Date(now.getTime() - 86400000);
+    end = start;
+  } else if (mode === "week") {
+    start = getWeekStart(now);
+    end = getWeekEnd(now);
+    if (end > now) end = now;
+  } else {
+    var days = parseInt(mode, 10) || 30;
+    start = new Date(now.getTime() - (days - 1) * 86400000);
+  }
+  document.getElementById("teamStartDate").value = formatDate(start);
+  document.getElementById("teamEndDate").value = formatDate(end);
+  loadTeamData();
 }
 
 function loadTeamData(){
