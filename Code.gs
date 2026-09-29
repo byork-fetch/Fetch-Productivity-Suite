@@ -240,8 +240,13 @@ function getTimeEntries(startDate, endDate) {
       var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
       var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
       if (!sheet || sheet.getLastRow() < 2) return [];
-      var data    = sheet.getRange(2, 1, sheet.getLastRow() - 1, 13).getValues();
-      var headers = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id"];
+      // Column N (14) = entry_source — "manual" for time added after the
+      // fact (dashboard Add Missed Time, or the extension's untracked-gap
+      // categorize), blank for normal tracked time. Read defensively: an
+      // older sheet may not have a 14th column yet.
+      var nCols   = Math.min(14, sheet.getMaxColumns());
+      var data    = sheet.getRange(2, 1, sheet.getLastRow() - 1, nCols).getValues();
+      var headers = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id","entry_source"].slice(0, nCols);
       var start = new Date(startDate + "T00:00:00"), end = new Date(endDate + "T23:59:59");
       var results = [];
       var skipped = 0;
@@ -327,6 +332,124 @@ function updateTimeEntryData(id, updates, callerEmail) {
     bumpCacheVersion("entries");
     return { success: true };
   } catch(e) { return { error: e.toString() }; }
+}
+
+// ============================================================
+// TIME ENTRIES — add missed time (called via POST from dashboard)
+// For time that never got tracked. Same permission rule as editing:
+// analysts can add for themselves (up to ADD_ENTRY_ANALYST_DAYS_BACK
+// days back), supervisors/admins for anyone on any past date. The
+// dashboard runs the same checks first for instant feedback, but this is
+// the one that counts — including the overlap check, which runs under a
+// lock so two adds can't slip past each other.
+// start_time/end_time are stored as full ISO strings (same as extension
+// entries), not bare "HH:MM:SS" UTC, so evening entries that cross UTC
+// midnight still land on the right local day.
+// ============================================================
+var ENTRY_SOURCE_COL           = 14;
+var ADD_ENTRY_MAX_SECONDS      = 12 * 3600;
+var ADD_ENTRY_ANALYST_DAYS_BACK = 7;
+var ADD_ENTRY_OVERLAP_TOLERANCE_MS = 60000; // an entry that exactly fills a gap still fits
+
+// Makes sure time_entries has column N with an "entry_source" header.
+// Cheap no-op once it exists.
+function ensureEntrySourceColumn(sheet) {
+  if (sheet.getMaxColumns() < ENTRY_SOURCE_COL) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), ENTRY_SOURCE_COL - sheet.getMaxColumns());
+  }
+  var header = sheet.getRange(1, ENTRY_SOURCE_COL);
+  if (!header.getValue()) header.setValue("entry_source");
+}
+
+// Same parsing convention as the dashboard's parseEntryTimeMs: full ISO if
+// the value has a "T", otherwise a bare UTC time on the entry's date.
+function _entryTimeMs(dateStr, t) {
+  if (t === "" || t === null || t === undefined) return null;
+  if (t instanceof Date) return t.getTime();
+  var s = String(t);
+  var d = s.indexOf("T") !== -1 ? new Date(s) : new Date(dateStr + "T" + s + "Z");
+  var ms = d.getTime();
+  return isNaN(ms) ? null : ms;
+}
+
+function addTimeEntryData(entry, callerEmail) {
+  var lock = LockService.getScriptLock();
+  try {
+    if (!entry) return { error: "Missing entry" };
+    var record      = getUserRecord(callerEmail) || {};
+    var role        = record.role || "analyst";
+    var displayName = record.display_name || "";
+    var privileged  = isPrivileged(role);
+
+    var analyst = String(entry.analyst || "").trim();
+    var task    = String(entry.task || "").trim();
+    var dateStr = String(entry.date || "").trim();
+    var reason  = String(entry.reason || "").trim();
+    if (!analyst || !task || !dateStr) return { error: "Analyst, activity, and date are required" };
+    if (!reason) return { error: "A reason is required" };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return { error: "Invalid date" };
+
+    if (!privileged && analyst !== displayName) {
+      Logger.log("addTimeEntryData permission denied — analyst='" + analyst + "', caller displayName='" + displayName + "', caller email=" + callerEmail);
+      return { error: "Permission denied" };
+    }
+
+    var startMs = _entryTimeMs(dateStr, entry.start_time);
+    var endMs   = _entryTimeMs(dateStr, entry.end_time);
+    if (startMs === null || endMs === null) return { error: "Start and end time are required" };
+    if (endMs <= startMs) return { error: "End time must be after start time" };
+    if (endMs > Date.now() + 60000) return { error: "That end time hasn't happened yet" };
+    var duration = Math.round((endMs - startMs) / 1000); // recomputed here, never trusted from the client
+    if (duration > ADD_ENTRY_MAX_SECONDS) return { error: "Keep it under 12 hours per entry" };
+
+    if (!privileged) {
+      var tz = Session.getScriptTimeZone();
+      var todayStr = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd");
+      var daysBack = Math.round((new Date(todayStr + "T00:00:00Z") - new Date(dateStr + "T00:00:00Z")) / 86400000);
+      if (daysBack > ADD_ENTRY_ANALYST_DAYS_BACK) return { error: "You can only add time from the last " + ADD_ENTRY_ANALYST_DAYS_BACK + " days. Ask a supervisor for older entries." };
+    }
+
+    lock.waitLock(15000);
+
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
+    if (!sheet) return { error: "Sheet not found" };
+    ensureEntrySourceColumn(sheet);
+
+    var maxId = 0;
+    if (sheet.getLastRow() > 1) {
+      var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
+      var tzr = Session.getScriptTimeZone();
+      for (var i = 0; i < rows.length; i++) {
+        var n = parseInt(rows[i][0]); if (!isNaN(n) && n > maxId) maxId = n;
+        if (String(rows[i][1]) !== analyst) continue;
+        var rDate = (rows[i][5] instanceof Date) ? Utilities.formatDate(rows[i][5], tzr, "yyyy-MM-dd") : String(rows[i][5]).substring(0, 10);
+        if (rDate !== dateStr) continue;
+        var rs = _entryTimeMs(rDate, rows[i][7]), re = _entryTimeMs(rDate, rows[i][8]);
+        if (rs === null || re === null) continue;
+        if (Math.min(endMs, re) - Math.max(startMs, rs) > ADD_ENTRY_OVERLAP_TOLERANCE_MS) {
+          return { error: "Overlaps an existing " + rows[i][3] + " entry that day" };
+        }
+      }
+    }
+    maxId++;
+
+    var startIso = new Date(startMs).toISOString(), endIso = new Date(endMs).toISOString();
+    var rowId = ("manual_" + analyst + "_" + dateStr + "_" + startIso + "_" + task).replace(/[^a-zA-Z0-9_\-]/g, "_").substring(0, 200);
+    // edit_reason (col J) holds the reason so it shows on hover in the Time
+    // Log; edited_at (col K) is left blank on purpose so added entries
+    // don't show up in "Recently Edited" as if they were changed.
+    var row = [maxId, analyst, "Fetch Rewards", task, duration, dateStr, "Work", startIso, endIso, reason, "", "", rowId, "manual"];
+    var target = sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length);
+    sheet.getRange(target.getRow(), 8, 1, 2).setNumberFormat("@"); // keep ISO times as text
+    target.setValues([row]);
+    bumpCacheVersion("entries");
+    return { success: true, id: maxId };
+  } catch(e) {
+    return { error: e.toString() };
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
+  }
 }
 
 // ============================================================
@@ -1312,6 +1435,9 @@ function doPost(e) {
       if (payload.action === "updateTimeEntry") {
         return jsonResponse(updateTimeEntryData(payload.id, payload.updates, payload.callerEmail));
       }
+      if (payload.action === "addTimeEntry") {
+        return jsonResponse(addTimeEntryData(payload.entry, payload.callerEmail));
+      }
       if (payload.action === "markFlagReviewed") {
         return jsonResponse(markFlagReviewed(payload.flagKey, payload.analyst, payload.message, payload.callerEmail));
       }
@@ -1357,7 +1483,14 @@ function doPost(e) {
         if (existingIds[j][0].toString() === sheetRowId) return jsonResponse({ success:true, skipped:true, reason:"Duplicate entry" });
       }
     }
-    sheet.appendRow([maxId, payload.analyst, payload.project||"Fetch Rewards", payload.task, Number(payload.duration), payload.date, payload.category||"Work", payload.start_time||null, payload.end_time||null, null, null, null, sheetRowId]);
+    // entry_source: extension 4.3+ sends "manual" for untracked-gap time the
+    // analyst categorized after the fact. Normal tracked time omits it.
+    var extRow = [maxId, payload.analyst, payload.project||"Fetch Rewards", payload.task, Number(payload.duration), payload.date, payload.category||"Work", payload.start_time||null, payload.end_time||null, null, null, null, sheetRowId];
+    if (payload.entry_source === "manual") {
+      ensureEntrySourceColumn(sheet);
+      extRow.push("manual");
+    }
+    sheet.appendRow(extRow);
     bumpCacheVersion("entries");
     return jsonResponse({ success: true, id: maxId });
   } catch(err) { return jsonResponse({ error: err.toString() }); }
