@@ -289,6 +289,9 @@ textarea{resize:vertical;min-height:80px;}
       <div class="collapsible">
         <button class="collapsible-trigger" onclick="toggleCollapsible('timeLog')"><span>Detailed Time Log</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
         <div class="collapsible-content" id="timeLogContent">
+          <div style="display:flex;justify-content:flex-end;margin-bottom:.75rem">
+            <button class="btn btn-outline btn-sm" onclick="openAddEntryModal()">+ Add Missed Time</button>
+          </div>
           <div class="export-filters-grid" style="margin-bottom:1rem">
             <div class="form-group"><label>Analyst</label><select id="timeLogAnalystFilter" class="form-select"><option value="all">All Analysts</option></select></div>
             <div class="form-group"><label>Activity / Status</label><select id="timeLogActivityFilter" class="form-select"><option value="all">All Activities</option></select></div>
@@ -408,6 +411,22 @@ textarea{resize:vertical;min-height:80px;}
       <div class="form-group" id="customReasonGroup" style="display:none"><label>Custom Reason *</label><textarea id="edit_customReason" placeholder="Please describe the reason…"></textarea></div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closeEditModal()">Cancel</button><button class="btn btn-primary" id="saveEditBtn" onclick="saveEdit()">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- ADD MISSED TIME MODAL -->
+<div class="modal-backdrop" id="addEntryModal">
+  <div class="modal">
+    <div class="modal-header"><button class="modal-close" onclick="closeAddEntryModal()">×</button><h2>Add Missed Time</h2><p>For time that didn't get tracked. It'll show as "added" in the Time Log.</p></div>
+    <div class="modal-body">
+      <div class="form-row"><div class="form-group"><label>Date</label><input type="date" id="add_date" onchange="updateAddEntryDuration()"/></div><div class="form-group"><label>Analyst</label><select class="form-select" id="add_analyst"></select></div></div>
+      <div class="form-group"><label>Activity</label><select class="form-select" id="add_task"></select></div>
+      <div class="form-row"><div class="form-group"><label>Start Time</label><input type="time" id="add_startTime" oninput="updateAddEntryDuration()"/></div><div class="form-group"><label>End Time</label><input type="time" id="add_endTime" oninput="updateAddEntryDuration()"/></div></div>
+      <div id="add_durationMsg" style="font-size:.85rem;color:var(--text-muted);min-height:1.2em"></div>
+      <div class="form-group"><label>Reason *</label><select class="form-select" id="add_reason" onchange="document.getElementById('add_customReasonGroup').style.display=this.value==='Other'?'block':'none'"><option value="">Select a reason…</option><option>Forgot to start timer</option><option>Auto-tracking didn't pick it up</option><option>Extension or computer issue</option><option value="Other">Other</option></select></div>
+      <div class="form-group" id="add_customReasonGroup" style="display:none"><label>Custom Reason *</label><textarea id="add_customReason" placeholder="Please describe the reason…"></textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeAddEntryModal()">Cancel</button><button class="btn btn-primary" id="saveAddEntryBtn" onclick="saveAddEntry()">Add Entry</button></div>
   </div>
 </div>
 
@@ -1277,7 +1296,9 @@ function renderTimeLog(){
   var sorted=sortEntries(filtered);
   document.getElementById("timeLogBody").innerHTML=sorted.length===0?'<tr><td colspan="7" class="empty">No entries match filters</td></tr>':sorted.map(function(e){
     var editBtn=(state.user.isSupervisor||e.analyst===state.user.displayName)?'<button class="edit-btn" onclick="openEditModal(\''+e.id+'\')" title="Edit">✎</button>':"";
-    var editedNote=e.edit_reason?' <span data-tooltip="'+esc(e.edit_reason)+'" style="font-size:.75rem;color:var(--text-muted);font-style:italic">(edited)</span>':"";
+    var editedNote=e.entry_source==="manual"
+      ?' <span data-tooltip="'+esc(e.edit_reason||"Added manually")+'" style="font-size:.75rem;color:var(--text-muted);font-style:italic">(added)</span>'
+      :(e.edit_reason?' <span data-tooltip="'+esc(e.edit_reason)+'" style="font-size:.75rem;color:var(--text-muted);font-style:italic">(edited)</span>':"");
     return '<tr><td>'+esc(e.date)+'</td><td><span class="badge">'+esc(e.analyst)+'</span></td><td>'+esc(e.task)+editedNote+'</td><td>'+(e.start_time?fmtTimeDisplay(e.date,e.start_time):"–")+'</td><td>'+(e.end_time?fmtTimeDisplay(e.date,e.end_time):"–")+'</td><td style="text-align:right;font-weight:600">'+fmtDuration(e.duration)+'</td><td>'+editBtn+'</td></tr>';
   }).join("");
 }
@@ -1373,6 +1394,141 @@ function saveEdit(){
   apiPost({action:"updateTimeEntry",id:entry.id,updates:updates,callerEmail:state.user.email})
     .then(function(res){document.getElementById("saveEditBtn").disabled=false;document.getElementById("saveEditBtn").textContent="Save Changes";if(res.error){toast("error",res.error);return;}toast("success","Entry updated!");closeEditModal();fetchDashboardData();})
     .catch(function(err){document.getElementById("saveEditBtn").disabled=false;document.getElementById("saveEditBtn").textContent="Save Changes";toast("error","Failed: "+err);});
+}
+
+// ============================================================
+// ADD MISSED TIME
+// Analysts can add time for themselves; supervisors for anyone (same
+// rule as the edit pencil). Code.gs re-checks this against callerEmail.
+// ============================================================
+var ADD_ENTRY_ACTIVITIES = [
+  "Dispute Review","Rules Review","RADAR","CF Audit","Lattice","Udemy","Medallia",
+  "AI/Innovation","Break (15 min)","Catching Up","Equipment Issue","Inclusion Calendar Programs",
+  "Lunch","Meeting","Senior Sync Prep","SFA Escalations","Training","Wellness"
+];
+var ADD_ENTRY_MAX_HOURS = 12;
+var ADD_ENTRY_ANALYST_DAYS_BACK = 7; // supervisors aren't limited
+
+function openAddEntryModal(){
+  var sel=document.getElementById("add_analyst");
+  if(state.user.isSupervisor){
+    var names={};
+    (state.allRangeEntries||[]).forEach(function(e){if(e.analyst)names[e.analyst]=1;});
+    (state.usersList||[]).forEach(function(u){var n=u.displayName||u.display_name||u.name;if(n)names[n]=1;});
+    if(state.user.displayName)names[state.user.displayName]=1;
+    var list=Object.keys(names).sort();
+    sel.innerHTML=list.map(function(n){return '<option value="'+esc(n)+'">'+esc(n)+'</option>';}).join("");
+    var pre=(state.selectedAnalyst&&state.selectedAnalyst!=="all")?state.selectedAnalyst:state.user.displayName;
+    if(pre&&names[pre])sel.value=pre;
+    sel.disabled=false;
+  } else {
+    sel.innerHTML='<option value="'+esc(state.user.displayName||"")+'">'+esc(state.user.displayName||"")+'</option>';
+    sel.disabled=true;
+  }
+  document.getElementById("add_task").innerHTML='<option value="">Select an activity…</option>'+ADD_ENTRY_ACTIVITIES.map(function(a){return '<option>'+esc(a)+'</option>';}).join("");
+
+  var today=new Date(), dateEl=document.getElementById("add_date");
+  dateEl.max=formatDate(today);
+  if(state.user.isSupervisor){dateEl.removeAttribute("min");}
+  else{var min=new Date(today.getTime()-ADD_ENTRY_ANALYST_DAYS_BACK*86400000);dateEl.min=formatDate(min);}
+  dateEl.value=formatDate(today);
+
+  // Default to the last 30 minutes, rounded down to 5 — the usual case is
+  // "just noticed nothing was tracking."
+  var end=new Date();end.setMinutes(end.getMinutes()-(end.getMinutes()%5),0,0);
+  var start=new Date(end.getTime()-30*60000);
+  if(formatDate(start)!==formatDate(end))start=new Date(end.getFullYear(),end.getMonth(),end.getDate(),0,0);
+  document.getElementById("add_startTime").value=String(start.getHours()).padStart(2,"0")+":"+String(start.getMinutes()).padStart(2,"0");
+  document.getElementById("add_endTime").value=String(end.getHours()).padStart(2,"0")+":"+String(end.getMinutes()).padStart(2,"0");
+
+  document.getElementById("add_reason").value="";
+  document.getElementById("add_customReason").value="";
+  document.getElementById("add_customReasonGroup").style.display="none";
+  resetAddEntryBtn();
+  updateAddEntryDuration();
+  document.getElementById("addEntryModal").classList.add("open");
+}
+function closeAddEntryModal(){document.getElementById("addEntryModal").classList.remove("open");}
+function resetAddEntryBtn(){var b=document.getElementById("saveAddEntryBtn");b.disabled=false;b.textContent="Add Entry";}
+
+// Local date + HH:MM -> epoch ms, in the viewer's own timezone.
+function addEntryLocalMs(date,hhmm){
+  if(!date||!hhmm)return null;
+  var d=date.split("-").map(Number),t=hhmm.split(":").map(Number);
+  return new Date(d[0],d[1]-1,d[2],t[0],t[1],0,0).getTime();
+}
+function setAddEntryMsg(msg,isError){
+  var el=document.getElementById("add_durationMsg");
+  el.textContent=msg;el.style.color=isError?"hsl(0,70%,50%)":"var(--text-muted)";
+}
+// Returns {startMs,endMs} or null after showing the problem.
+function readAddEntryTimes(){
+  var date=document.getElementById("add_date").value;
+  var s=addEntryLocalMs(date,document.getElementById("add_startTime").value);
+  var e=addEntryLocalMs(date,document.getElementById("add_endTime").value);
+  if(s===null||e===null){setAddEntryMsg("Pick a date, start, and end time",true);return null;}
+  if(e<=s){setAddEntryMsg("End time must be after start time",true);return null;}
+  if(e>Date.now()+60000){setAddEntryMsg("That end time hasn't happened yet",true);return null;}
+  if(e-s>ADD_ENTRY_MAX_HOURS*3600000){setAddEntryMsg("Keep it under "+ADD_ENTRY_MAX_HOURS+" hours per entry",true);return null;}
+  return {startMs:s,endMs:e};
+}
+function updateAddEntryDuration(){
+  var t=readAddEntryTimes();
+  if(t)setAddEntryMsg("Duration: "+fmtDuration(Math.round((t.endMs-t.startMs)/1000)),false);
+}
+
+function saveAddEntry(){
+  var t=readAddEntryTimes();if(!t)return;
+  var analyst=document.getElementById("add_analyst").value;
+  var task=document.getElementById("add_task").value;
+  var date=document.getElementById("add_date").value;
+  if(!analyst){setAddEntryMsg("Pick an analyst",true);return;}
+  if(!task){setAddEntryMsg("Pick an activity",true);return;}
+  var reason=document.getElementById("add_reason").value;
+  if(!reason){setAddEntryMsg("Please select a reason",true);return;}
+  if(reason==="Other"){reason=document.getElementById("add_customReason").value.trim();if(!reason){setAddEntryMsg("Please describe the reason",true);return;}}
+
+  var btn=document.getElementById("saveAddEntryBtn");
+  btn.disabled=true;btn.textContent="Checking…";
+
+  // Overlap check against that analyst's actual entries for that day —
+  // fetched fresh, since the day may be outside the loaded period.
+  // 60s tolerance so an entry that exactly fills a gap still fits.
+  apiGet("getDashboardData",{start:date,end:date,priorStart:date,priorEnd:date}).then(function(result){
+    var rows=(result&&!result.error&&Array.isArray(result.entries))?result.entries:[];
+    var clash=null;
+    rows.forEach(function(r){
+      if(clash||r.analyst!==analyst||r.date!==date)return;
+      var rs=parseEntryTimeMs(r.date,r.start_time),re=parseEntryTimeMs(r.date,r.end_time);
+      if(rs==null||re==null)return;
+      if(Math.min(t.endMs,re)-Math.max(t.startMs,rs)>60000)clash={task:r.task,s:rs,e:re};
+    });
+    if(clash){
+      var f=function(ms){return new Date(ms).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit",hour12:true});};
+      setAddEntryMsg("Overlaps "+clash.task+" ("+f(clash.s)+" – "+f(clash.e)+")",true);
+      resetAddEntryBtn();return;
+    }
+    btn.textContent="Saving…";
+    return apiPost({
+      action:"addTimeEntry",
+      entry:{
+        analyst:analyst,
+        task:task,
+        date:date,
+        start_time:new Date(t.startMs).toISOString(),
+        end_time:new Date(t.endMs).toISOString(),
+        duration:Math.round((t.endMs-t.startMs)/1000),
+        entry_source:"manual",
+        reason:reason
+      },
+      callerEmail:state.user.email
+    }).then(function(res){
+      resetAddEntryBtn();
+      if(!res||res.error){setAddEntryMsg((res&&res.error)||"Save failed",true);return;}
+      toast("success","Added "+fmtDuration(Math.round((t.endMs-t.startMs)/1000))+" of "+task);
+      closeAddEntryModal();fetchDashboardData();
+    });
+  }).catch(function(err){resetAddEntryBtn();setAddEntryMsg("Failed: "+err,true);});
 }
 
 // Quick-select pill row for Team Directory (Today/Yesterday/This Week/
