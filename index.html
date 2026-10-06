@@ -505,22 +505,45 @@ var GOOGLE_CLIENT_ID = "422172167913-rv8addd23lt5085c9ha235sblcpih199.apps.googl
 // loads chain a follow-up request after the first one returns.
 var _freshUntil = 0;
 
+// Every request carries the server-issued session token from sign-in. The
+// server works out who you are from that token alone (it ignores any email
+// the page sends), and only returns data you're allowed to see.
+function currentSessionToken(){ return (state && state.user && state.user.session) || ""; }
+
+// Session missing, expired or invalid: send the person back to sign-in.
+var _authRedirecting = false;
+function handleAuthResult(json){
+  if (json && json.error === "AUTH_REQUIRED") {
+    if (!_authRedirecting) {
+      _authRedirecting = true;
+      clearSession();
+      alert("Your sign-in has expired. Please sign in again.");
+      window.location.reload();
+    }
+    return new Promise(function(){}); // stop the caller; the page is reloading
+  }
+  return json;
+}
+
 function apiGet(action, params) {
   var url = EXEC_URL + "?action=" + encodeURIComponent(action) + "&secret=" + encodeURIComponent(DASH_SECRET);
   if (Date.now() < _freshUntil) url += "&fresh=1";
+  var tok = currentSessionToken();
+  if (tok) url += "&session=" + encodeURIComponent(tok);
   if (params) {
     Object.keys(params).forEach(function(k){ url += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(params[k]); });
   }
-  return fetch(url).then(function(r){ return r.json(); });
+  return fetch(url).then(function(r){ return r.json(); }).then(handleAuthResult);
 }
 
 function apiPost(payload) {
   payload.dashSecret = DASH_SECRET;
+  payload.session = currentSessionToken();
   return fetch(EXEC_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload)
-  }).then(function(r){ return r.json(); });
+  }).then(function(r){ return r.json(); }).then(handleAuthResult);
 }
 
 // ============================================================
@@ -530,7 +553,9 @@ var SESSION_KEY = "fps_session";
 var SESSION_TTL = 7 * 24 * 60 * 60 * 1000;
 
 function saveSession(user) { try { localStorage.setItem(SESSION_KEY, JSON.stringify({ user: user, expires: Date.now() + SESSION_TTL })); } catch(e){} }
-function loadSession() { try { var s = JSON.parse(localStorage.getItem(SESSION_KEY)||"null"); if (!s||Date.now()>s.expires){localStorage.removeItem(SESSION_KEY);return null;} return s.user; } catch(e){return null;} }
+// A saved sign-in from before verified sessions existed has no session
+// token, so it's discarded and the person signs in once more.
+function loadSession() { try { var s = JSON.parse(localStorage.getItem(SESSION_KEY)||"null"); if (!s||Date.now()>s.expires||!s.user||!s.user.session){localStorage.removeItem(SESSION_KEY);return null;} return s.user; } catch(e){return null;} }
 function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch(e){} }
 
 // ============================================================
@@ -538,14 +563,12 @@ function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch(e)
 // ============================================================
 function handleGoogleSignIn(response) {
   try {
-    var parts   = response.credential.split(".");
-    var payload = JSON.parse(atob(parts[1].replace(/-/g,"+").replace(/_/g,"/")));
-    var email   = payload.email;
-    var gName   = payload.name || "";
-    if (!email) { showLoginError("Could not read email. Please try again."); return; }
+    if (!response || !response.credential) { showLoginError("Sign-in failed. Please try again."); return; }
     document.getElementById("login-screen").classList.remove("visible");
     document.getElementById("app-loading").style.display = "flex";
-    apiGet("getUserByEmail", { email: email })
+    // Send Google's signed token; the server verifies it with Google and
+    // returns who you are plus a session token for later requests.
+    apiGet("signIn", { idToken: response.credential })
       .then(function(user) {
         document.getElementById("app-loading").style.display = "none";
         if (!user || !user.authenticated) {
@@ -553,7 +576,6 @@ function handleGoogleSignIn(response) {
           showLoginError((user && user.error) ? user.error : "Account not recognized. Ask your admin to add you.");
           return;
         }
-        if (!user.displayName || user.displayName === email.split("@")[0]) user.displayName = gName || user.displayName;
         saveSession(user);
         bootWithUser(user);
       })
