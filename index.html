@@ -1593,8 +1593,17 @@ function loadTeamData(){
   }).catch(function(err){toast("error","Failed: "+err);});
 }
 
-var NON_PRODUCTIVE=["Break","Equipment Issue","Catching Up","Inclusion Calendar Programs","Meeting"];
-function calcUtilization(entries){if(!entries.length)return 0;var total=sum(entries,"duration"),prod=entries.filter(function(e){return!NON_PRODUCTIVE.some(function(s){return e.task.toLowerCase().includes(s.toLowerCase());});});return total?Math.round(sum(prod,"duration")/total*100):0;}
+// Utilization = time on queue/review work ÷ time on the clock.
+// Allowlist (not a deny list): ONLY these activities count as utilized.
+// Before this, anything not on a short exclusion list counted, so Lunch,
+// Training, Udemy, Lattice, Wellness etc. all inflated utilization.
+// Matching is case-insensitive "contains", so "Dispute Review" and
+// "Dispute Reviews", or a task with a 🧹Sweeping suffix, still match.
+var UTILIZED_TASKS=["SFA Escalations","Dispute Review","Rules Review","RADAR","CF Audit"];
+// Lunch is off the clock, so it's left out of the denominator entirely.
+var OFF_CLOCK_TASKS=["Lunch"];
+function _taskMatches(task,list){var t=String(task||"").toLowerCase();return list.some(function(s){return t.includes(s.toLowerCase());});}
+function calcUtilization(entries){var onClock=entries.filter(function(e){return!_taskMatches(e.task,OFF_CLOCK_TASKS);});if(!onClock.length)return 0;var total=sum(onClock,"duration"),prod=onClock.filter(function(e){return _taskMatches(e.task,UTILIZED_TASKS);});return total?Math.round(sum(prod,"duration")/total*100):0;}
 
 function renderSupervisorFilters(assignments){
   var visible=(assignments||[]).filter(function(a){ return !isHiddenAssignment(a); });
