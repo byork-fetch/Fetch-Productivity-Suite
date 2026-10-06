@@ -1954,3 +1954,8 @@ function archiveOldData() {
     lock.releaseLock();
   }
 }
+
+function testSignInPermission() {
+  var res = UrlFetchApp.fetch("https://www.google.com");
+  Logger.log("Permission OK, status " + res.getResponseCode());
+}
