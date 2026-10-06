@@ -1599,7 +1599,7 @@ function loadTeamData(){
 // Training, Udemy, Lattice, Wellness etc. all inflated utilization.
 // Matching is case-insensitive "contains", so "Dispute Review" and
 // "Dispute Reviews", or a task with a 🧹Sweeping suffix, still match.
-var UTILIZED_TASKS=["SFA Escalations","Dispute Review","Rules Review","RADAR","CF Audit"];
+var UTILIZED_TASKS=["SFA Escalations","Dispute Review","Rules Review","RADAR","CF Audit","Training","AI/Innovation"];
 // Lunch is off the clock, so it's left out of the denominator entirely.
 var OFF_CLOCK_TASKS=["Lunch"];
 function _taskMatches(task,list){var t=String(task||"").toLowerCase();return list.some(function(s){return t.includes(s.toLowerCase());});}
