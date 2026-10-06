@@ -124,6 +124,98 @@ function jsonResponse(data) {
 }
 
 // ============================================================
+// SIGN-IN VERIFICATION (v4.3)
+// The dashboard used to tell the server who you were by sending your email,
+// and the server believed it. Anyone could send someone else's email. Now:
+//   1. On sign-in, the page sends Google's signed ID token (the "credential"
+//      from Sign in with Google). The server asks Google to confirm it's
+//      real, issued for OUR client ID, for a verified @fetchrewards.com email.
+//   2. The server then issues its own session token: the email plus an
+//      expiry, signed with a secret only this script knows (HMAC). Valid 7
+//      days, matching the dashboard's remembered sign-in.
+//   3. Every dashboard request carries that session token. The server checks
+//      the signature and uses the email INSIDE it. Emails sent in request
+//      parameters are ignored, so nobody can ask for someone else's data.
+// Analysts' reads are then filtered server-side to their own rows, so other
+// people's data never reaches their browser at all.
+// ============================================================
+var GOOGLE_CLIENT_ID     = "422172167913-rv8addd23lt5085c9ha235sblcpih199.apps.googleusercontent.com";
+var ALLOWED_EMAIL_DOMAIN = "fetchrewards.com";
+var SESSION_TTL_MS       = 7 * 24 * 60 * 60 * 1000;
+var _caller = null; // set per request once the session checks out
+
+function _sessionKey() {
+  var props = PropertiesService.getScriptProperties();
+  var k = props.getProperty("SESSION_SIGNING_KEY");
+  if (!k) { k = Utilities.getUuid() + Utilities.getUuid(); props.setProperty("SESSION_SIGNING_KEY", k); }
+  return k;
+}
+
+function _sign(str) {
+  return Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(str, _sessionKey())).replace(/=+$/, "");
+}
+
+function _issueSession(email) {
+  var body = Utilities.base64EncodeWebSafe(JSON.stringify({ e: email.toLowerCase(), x: Date.now() + SESSION_TTL_MS })).replace(/=+$/, "");
+  return body + "." + _sign(body);
+}
+
+// Returns the verified email, or null.
+function _verifySession(token) {
+  if (!token || typeof token !== "string") return null;
+  var parts = token.split(".");
+  if (parts.length !== 2) return null;
+  var expected = _sign(parts[0]);
+  if (expected.length !== parts[1].length) return null;
+  var diff = 0;
+  for (var i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ parts[1].charCodeAt(i);
+  if (diff !== 0) return null;
+  try {
+    var pad = parts[0] + "===".slice((parts[0].length + 3) % 4);
+    var data = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(pad)).getDataAsString());
+    if (!data.e || !data.x || Date.now() > data.x) return null;
+    return data.e;
+  } catch (e) { return null; }
+}
+
+// Asks Google to validate a Sign in with Google ID token. Returns the email
+// if it's genuine, unexpired, for our client ID and a verified Fetch account.
+function _verifyGoogleIdToken(idToken) {
+  if (!idToken) return { error: "Missing sign-in token" };
+  var res = UrlFetchApp.fetch("https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(idToken), { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return { error: "Google could not verify this sign-in. Please try again." };
+  var info = JSON.parse(res.getContentText());
+  if (info.aud !== GOOGLE_CLIENT_ID) return { error: "Sign-in token was not issued for this dashboard." };
+  if (String(info.email_verified) !== "true") return { error: "Google account email is not verified." };
+  var email = String(info.email || "").toLowerCase();
+  if ((email.split("@")[1] || "") !== ALLOWED_EMAIL_DOMAIN) return { error: "Please sign in with your Fetch Rewards account" };
+  if (Number(info.exp) * 1000 < Date.now()) return { error: "Sign-in expired. Please try again." };
+  return { email: email, name: info.name || "" };
+}
+
+// Cached user lookup — the users sheet is read on every request now, so
+// keep it out of the hot path.
+function _getCallerRecord(email) {
+  var rec = cachedCall("userRecord:" + email, 300, function(){ return getUserRecord(email) || {}; }, ["misc"]);
+  var role = rec.role || "analyst";
+  return { email: email, role: role, privileged: isPrivileged(role), displayName: rec.display_name || email.split("@")[0] };
+}
+
+function signIn(idToken) {
+  var g = _verifyGoogleIdToken(idToken);
+  if (g.error) return { authenticated: false, error: g.error };
+  var c = _getCallerRecord(g.email);
+  return { authenticated: true, email: c.email, role: c.role, isSupervisor: c.privileged, displayName: c.displayName, googleName: g.name, session: _issueSession(c.email) };
+}
+
+// Analysts only ever get their own rows back.
+function _scopeRows(rows) {
+  if (!_caller || _caller.privileged || !Array.isArray(rows)) return rows;
+  var me = _caller.displayName;
+  return rows.filter(function(r){ return r && r.analyst === me; });
+}
+
+// ============================================================
 // doGet — handles both dashboard data requests and ping
 // ============================================================
 function doGet(e) {
@@ -144,14 +236,25 @@ function doGet(e) {
     }
 
     try {
+      if (action === "signIn") return jsonResponse(signIn(params.idToken));
+
+      var callerEmail = _verifySession(params.session);
+      if (!callerEmail) return jsonResponse({ error: "AUTH_REQUIRED" });
+      _caller = _getCallerRecord(callerEmail);
+      if (action === "me") {
+        return jsonResponse({ authenticated: true, email: _caller.email, role: _caller.role, isSupervisor: _caller.privileged, displayName: _caller.displayName });
+      }
+
       if (action === "getAvailableMonths") {
         return jsonResponse(getAvailableMonths());
       }
       if (action === "getTimeEntries") {
-        return jsonResponse(getTimeEntries(params.start, params.end));
+        var te = getTimeEntries(params.start, params.end);
+        return jsonResponse(te && te.error ? te : _scopeRows(te));
       }
       if (action === "getCaseEntries") {
-        return jsonResponse(getCaseEntries(params.start, params.end));
+        var ce = getCaseEntries(params.start, params.end);
+        return jsonResponse(ce && ce.error ? ce : _scopeRows(ce));
       }
       // Combined current+prior case fetch — see getCaseEntriesWithPrior()
       // below. Introduced so the dashboard's period-switcher (Today/This
@@ -160,7 +263,9 @@ function doGet(e) {
       // in-execution _casesMemory, so this mainly saves the network/
       // cold-start overhead of a second separate Apps Script execution.
       if (action === "getCaseEntriesWithPrior") {
-        return jsonResponse(getCaseEntriesWithPrior(params.start, params.end, params.priorStart, params.priorEnd));
+        var cp = getCaseEntriesWithPrior(params.start, params.end, params.priorStart, params.priorEnd);
+        if (cp && !cp.error) { cp.current = _scopeRows(cp.current); cp.prior = _scopeRows(cp.prior); }
+        return jsonResponse(cp);
       }
       // Full dashboard payload (entries + cases + prior-period cases) in
       // ONE call — the dashboard used to fire a separate request for time
@@ -168,31 +273,33 @@ function doGet(e) {
       // its own case-period control). Now that a single period drives the
       // whole Dashboard view, this combines both into one round trip.
       if (action === "getDashboardData") {
-        return jsonResponse(getDashboardData(params.start, params.end, params.priorStart, params.priorEnd));
+        var dd = getDashboardData(params.start, params.end, params.priorStart, params.priorEnd);
+        if (dd && !dd.error) { dd.entries = _scopeRows(dd.entries); dd.cases = _scopeRows(dd.cases); dd.priorCases = _scopeRows(dd.priorCases); }
+        return jsonResponse(dd);
       }
       if (action === "getTeamData") {
-        return jsonResponse(getTeamData(params.start, params.end, params.email));
+        return jsonResponse(getTeamData(params.start, params.end, _caller.email));
       }
       if (action === "getAssignments") {
-        return jsonResponse(getAssignmentsList());
+        return jsonResponse(_caller.privileged ? getAssignmentsList() : []);
       }
       if (action === "getAllUsers") {
-        return jsonResponse(getAllUsers(params.email));
+        return jsonResponse(getAllUsers(_caller.email));
       }
       if (action === "getUserByEmail") {
-        return jsonResponse(getUserByEmail(params.email));
+        return jsonResponse({ authenticated: true, email: _caller.email, role: _caller.role, isSupervisor: _caller.privileged, displayName: _caller.displayName });
       }
       if (action === "getReviewedFlags") {
-        return jsonResponse(getReviewedFlagKeys());
+        return jsonResponse(_caller.privileged ? getReviewedFlagKeys() : []);
       }
       if (action === "getReviewedFlagDetails") {
-        return jsonResponse(getReviewedFlagDetails());
+        return jsonResponse(_caller.privileged ? getReviewedFlagDetails() : []);
       }
       if (action === "getDigestRecipients") {
-        return jsonResponse(getDigestRecipients(params.email));
+        return jsonResponse(getDigestRecipients(_caller.email));
       }
       if (action === "getCaseTrends") {
-        return jsonResponse(getCaseTrends(params.weeksBack, params.analyst));
+        return jsonResponse(getCaseTrends(params.weeksBack, _caller.privileged ? params.analyst : _caller.displayName));
       }
       return jsonResponse({ error: "Unknown action: " + action });
     } catch(err) {
@@ -497,10 +604,10 @@ function addTimeEntryData(entry, callerEmail) {
 function getTeamData(startDate, endDate, callerEmail) {
   var full = _getTeamDataFull(startDate, endDate);
   if (!full || full.error) return full;
-  var record = callerEmail ? (getUserRecord(callerEmail) || {}) : {};
-  if (isPrivileged(record.role)) return full;
+  var c = (_caller && _caller.email === String(callerEmail || "").toLowerCase()) ? _caller : (callerEmail ? _getCallerRecord(String(callerEmail).toLowerCase()) : null);
+  if (c && c.privileged) return full;
 
-  var myName = record.display_name || "";
+  var myName = c ? c.displayName : "";
   var mine = (full.assignments || []).filter(function(a){ return a.analyst_name === myName; });
   var teamKey = mine.length ? (mine[0].team_name || mine[0].supervisor_email) : null;
   var teammateRoles = teamKey ? (full.assignments || [])
@@ -1514,6 +1621,9 @@ function doPost(e) {
 
     // Dashboard mutation actions (updateTimeEntry, upsertUser, importCSV)
     if (payload.dashSecret === DASHBOARD_SECRET) {
+      var postCaller = _verifySession(payload.session);
+      if (!postCaller) return jsonResponse({ error: "AUTH_REQUIRED" });
+      payload.callerEmail = postCaller; // never trust an email sent by the page
       if (payload.action === "updateTimeEntry") {
         return jsonResponse(updateTimeEntryData(payload.id, payload.updates, payload.callerEmail));
       }
