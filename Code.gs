@@ -57,15 +57,29 @@ function isAdminRole(role) {
 // ============================================================
 var CACHE_DEFAULT_TTL = 300; // seconds — was 120; safe to raise now that invalidation is domain-scoped instead of global
 
+// Script Properties are read ONCE per request and reused. Each individual
+// getProperty() is a separate round trip (~50-100ms), and a single dashboard
+// request was making several (cache versions, session key, archive ID), which
+// added up to a noticeable delay on every call.
+var _propsMemo = null;
+function _prop(key) {
+  if (!_propsMemo) _propsMemo = PropertiesService.getScriptProperties().getProperties();
+  return _propsMemo[key] || null;
+}
+function _setProp(key, value) {
+  PropertiesService.getScriptProperties().setProperty(key, value);
+  if (_propsMemo) _propsMemo[key] = value;
+}
+
 function getCacheVersion(domain) {
-  var props = PropertiesService.getScriptProperties();
-  return props.getProperty("cacheVersion_" + domain) || "0";
+  return _prop("cacheVersion_" + domain) || "0";
 }
 
 function bumpCacheVersion(domain) {
+  // Read fresh (not memoized) so concurrent writers don't lose a bump.
   var props = PropertiesService.getScriptProperties();
   var v = parseInt(props.getProperty("cacheVersion_" + domain) || "0", 10) + 1;
-  props.setProperty("cacheVersion_" + domain, String(v));
+  _setProp("cacheVersion_" + domain, String(v));
 }
 
 // Combines multiple domains' versions into one string, for reads (like Team
@@ -145,9 +159,8 @@ var SESSION_TTL_MS       = 7 * 24 * 60 * 60 * 1000;
 var _caller = null; // set per request once the session checks out
 
 function _sessionKey() {
-  var props = PropertiesService.getScriptProperties();
-  var k = props.getProperty("SESSION_SIGNING_KEY");
-  if (!k) { k = Utilities.getUuid() + Utilities.getUuid(); props.setProperty("SESSION_SIGNING_KEY", k); }
+  var k = _prop("SESSION_SIGNING_KEY");
+  if (!k) { k = Utilities.getUuid() + Utilities.getUuid(); _setProp("SESSION_SIGNING_KEY", k); }
   return k;
 }
 
@@ -1767,14 +1780,14 @@ var CASE_HEADERS       = ["Date","Analyst","Platform","Case ID","Source","Handle
 // archives rows older than the cutoff, so newer ranges never need it.
 function _rangeNeedsArchive(startDate) {
   if (!startDate) return false;
-  if (!PropertiesService.getScriptProperties().getProperty(ARCHIVE_PROP_KEY)) return false;
+  if (!_prop(ARCHIVE_PROP_KEY)) return false;
   return String(startDate) < _archiveCutoffYmd();
 }
 
 var _archiveSsMemo = null;
 function _getArchiveTabIfExists(name) {
   try {
-    var id = PropertiesService.getScriptProperties().getProperty(ARCHIVE_PROP_KEY);
+    var id = _prop(ARCHIVE_PROP_KEY);
     if (!id) return null;
     if (!_archiveSsMemo) _archiveSsMemo = SpreadsheetApp.openById(id);
     return _archiveSsMemo.getSheetByName(name);
@@ -1953,9 +1966,4 @@ function archiveOldData() {
   } finally {
     lock.releaseLock();
   }
-}
-
-function testSignInPermission() {
-  var res = UrlFetchApp.fetch("https://www.google.com");
-  Logger.log("Permission OK, status " + res.getResponseCode());
 }
