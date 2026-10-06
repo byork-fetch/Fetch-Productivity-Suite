@@ -1,6 +1,6 @@
 // ============================================================
 // PI PRODUCTIVITY SUITE — Google Apps Script Backend
-// Code.gs — v4.1 (GitHub Pages / fetch() compatible)
+// Code.gs — v4.3 (GitHub Pages / fetch() compatible)
 // ============================================================
 // All data reads now go through doGet with ?action=... params.
 // The dashboard is hosted on GitHub Pages and calls this
@@ -126,7 +126,7 @@ function doGet(e) {
 
   // Ping check (used by extension)
   if (params.ping) {
-    return jsonResponse({ ok: true, version: "3.9-server", serverTs: new Date().toISOString() });
+    return jsonResponse({ ok: true, version: "4.3-server", serverTs: new Date().toISOString() });
   }
 
   // Data requests from the GitHub Pages dashboard
@@ -1528,4 +1528,186 @@ function handleCaseRow(payload) {
     bumpCacheVersion("cases");
     return jsonResponse({ success: true });
   } catch(err) { return jsonResponse({ error: err.toString() }); }
+}
+
+// ============================================================
+// ARCHIVING (v4.3)
+// Moves Cases and time_entries rows older than ARCHIVE_MONTHS out of this
+// spreadsheet and into a SEPARATE archive spreadsheet, so the live sheet
+// stays small (faster dashboard reads, faster dedupe scans on every
+// extension sync) and never approaches Google's 10M-cell-per-spreadsheet
+// limit. A separate file, not hidden tabs: hidden tabs still count toward
+// that limit. The archive file is also the clean handoff point for the
+// data team's Snowflake integration.
+//
+// Every dashboard view reaches back at most 90 days (12 weeks for case
+// trends), so nothing the dashboard shows is affected by a 4-month cutoff.
+//
+// SETUP (once): run installArchiveTrigger() from the Apps Script editor.
+// It schedules archiveOldData() nightly (~2am script time). The first run
+// creates the archive spreadsheet in the script owner's Drive and stores
+// its ID in Script Properties (ARCHIVE_SPREADSHEET_ID). To use an existing
+// file instead, set that property to its ID before the first run.
+//
+// SAFETY: rows are copied to the archive first, then deleted from the live
+// sheet. Copies are de-duplicated against what's already archived, so if a
+// run is cut off between the two steps the next run just finishes the job
+// without double-archiving. Deletes go bottom-up over a snapshot, so rows
+// the extension appends mid-run (always at the bottom) are never touched.
+// A run that hits the time budget stops cleanly and continues next night.
+// ============================================================
+var ARCHIVE_MONTHS        = 4;
+var ARCHIVE_PROP_KEY      = "ARCHIVE_SPREADSHEET_ID";
+var ARCHIVE_FILE_NAME     = "PI Productivity Suite — Archive";
+var ARCHIVE_TIME_BUDGET_MS = 4.5 * 60 * 1000; // stay well under the 6 min execution cap
+var ARCHIVE_WRITE_CHUNK   = 5000;
+
+var TIME_ENTRY_HEADERS = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id","entry_source"];
+var CASE_HEADERS       = ["Date","Analyst","Platform","Case ID","Source","Handle (sec)","Handle (min)","Solved At","dedupe_key","Timing Method"];
+
+function installArchiveTrigger() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "archiveOldData") ScriptApp.deleteTrigger(triggers[i]);
+  }
+  ScriptApp.newTrigger("archiveOldData").timeBased().everyDays(1).atHour(2).create();
+  Logger.log("Archive trigger installed: archiveOldData runs daily around 2am (" + Session.getScriptTimeZone() + ").");
+}
+
+function _archiveCutoffYmd() {
+  var d = new Date();
+  d.setMonth(d.getMonth() - ARCHIVE_MONTHS);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
+
+function _archiveCellYmd(val, tz) {
+  if (val instanceof Date) return isNaN(val.getTime()) ? "" : Utilities.formatDate(val, tz, "yyyy-MM-dd");
+  var s = String(val || "").trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.substring(0, 10) : "";
+}
+
+function _getArchiveSpreadsheet() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty(ARCHIVE_PROP_KEY);
+  if (id) return SpreadsheetApp.openById(id);
+  var ss = SpreadsheetApp.create(ARCHIVE_FILE_NAME);
+  props.setProperty(ARCHIVE_PROP_KEY, ss.getId());
+  Logger.log("Created archive spreadsheet: " + ss.getUrl());
+  return ss;
+}
+
+function _getArchiveTab(archiveSs, name, headers) {
+  var sh = archiveSs.getSheetByName(name);
+  if (!sh) {
+    sh = archiveSs.insertSheet(name);
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
+    sh.setFrozenRows(1);
+    // Trim the default grid down to just these columns so empty cells
+    // don't eat into the archive file's own cell limit.
+    if (sh.getMaxColumns() > headers.length) sh.deleteColumns(headers.length + 1, sh.getMaxColumns() - headers.length);
+  }
+  // Drop the default "Sheet1" a freshly created spreadsheet comes with.
+  var def = archiveSs.getSheetByName("Sheet1");
+  if (def && archiveSs.getSheets().length > 1 && def.getLastRow() === 0) archiveSs.deleteSheet(def);
+  return sh;
+}
+
+// Moves one sheet's old rows. keyFn builds a unique key per row for the
+// archive dedupe. Returns { archived, deleted, done }.
+function _archiveSheet(liveSheet, archiveSheet, nCols, dateColIdx, keyFn, keyColsInArchive, cutoff, deadline) {
+  var result = { archived: 0, deleted: 0, done: true };
+  if (!liveSheet || liveSheet.getLastRow() < 2) return result;
+  var tz = Session.getScriptTimeZone();
+
+  // Snapshot of the live sheet as it is right now.
+  var lastRow = liveSheet.getLastRow();
+  var width   = Math.min(nCols, liveSheet.getMaxColumns());
+  var data    = liveSheet.getRange(2, 1, lastRow - 1, width).getValues();
+
+  // Row numbers (1-based sheet rows) that are older than the cutoff.
+  var oldRows = [];
+  for (var i = 0; i < data.length; i++) {
+    var ymd = _archiveCellYmd(data[i][dateColIdx], tz);
+    if (ymd && ymd < cutoff) oldRows.push(i + 2);
+  }
+  if (!oldRows.length) return result;
+
+  // 1) Copy to archive, skipping anything already archived.
+  var existing = {};
+  if (archiveSheet.getLastRow() > 1) {
+    var keyVals = archiveSheet.getRange(2, 1, archiveSheet.getLastRow() - 1, keyColsInArchive).getValues();
+    for (var k = 0; k < keyVals.length; k++) existing[keyFn(keyVals[k])] = true;
+  }
+  var toWrite = [];
+  for (var r = 0; r < oldRows.length; r++) {
+    var row = data[oldRows[r] - 2].slice();
+    while (row.length < nCols) row.push("");
+    var key = keyFn(row);
+    if (existing[key]) continue;
+    existing[key] = true;
+    toWrite.push(row);
+  }
+  for (var c = 0; c < toWrite.length; c += ARCHIVE_WRITE_CHUNK) {
+    var chunk = toWrite.slice(c, c + ARCHIVE_WRITE_CHUNK);
+    archiveSheet.getRange(archiveSheet.getLastRow() + 1, 1, chunk.length, nCols).setValues(chunk);
+    result.archived += chunk.length;
+  }
+  SpreadsheetApp.flush();
+
+  // 2) Delete from live, bottom-up, in contiguous runs.
+  var runs = [];
+  var runStart = oldRows[0], runEnd = oldRows[0];
+  for (var j = 1; j < oldRows.length; j++) {
+    if (oldRows[j] === runEnd + 1) { runEnd = oldRows[j]; continue; }
+    runs.push([runStart, runEnd]); runStart = runEnd = oldRows[j];
+  }
+  runs.push([runStart, runEnd]);
+  for (var x = runs.length - 1; x >= 0; x--) {
+    if (Date.now() > deadline) { result.done = false; break; }
+    var count = runs[x][1] - runs[x][0] + 1;
+    liveSheet.deleteRows(runs[x][0], count);
+    result.deleted += count;
+  }
+  return result;
+}
+
+// Nightly job (see installArchiveTrigger). Safe to run by hand any time.
+function archiveOldData() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) { Logger.log("archiveOldData: another run is in progress, skipping."); return; }
+  try {
+    var deadline = Date.now() + ARCHIVE_TIME_BUDGET_MS;
+    var cutoff   = _archiveCutoffYmd();
+    var ss       = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var archive  = _getArchiveSpreadsheet();
+
+    // Cases: dedupe_key (col I) is unique per case.
+    var cases = _archiveSheet(
+      ss.getSheetByName(SHEET_CASES),
+      _getArchiveTab(archive, SHEET_CASES, CASE_HEADERS),
+      CASE_HEADERS.length, 0,
+      function(row) { return String(row[8] || [row[0], row[2], row[3]].join("|")); },
+      9, cutoff, deadline);
+    if (cases.deleted) bumpCacheVersion("cases");
+
+    // time_entries: numeric id (col A) plus sheet_row_id (col M).
+    var entries = { archived: 0, deleted: 0, done: false };
+    if (Date.now() < deadline) {
+      entries = _archiveSheet(
+        ss.getSheetByName(SHEET_TIME_ENTRIES),
+        _getArchiveTab(archive, SHEET_TIME_ENTRIES, TIME_ENTRY_HEADERS),
+        TIME_ENTRY_HEADERS.length, 5,
+        function(row) { return String(row[0]) + "|" + String(row[12] || ""); },
+        13, cutoff, deadline);
+      if (entries.deleted) bumpCacheVersion("entries");
+    }
+
+    var msg = "archiveOldData (cutoff " + cutoff + "): Cases archived " + cases.archived + ", removed " + cases.deleted +
+              "; time_entries archived " + entries.archived + ", removed " + entries.deleted +
+              ((cases.done && entries.done) ? "" : " — time budget hit, will continue next run");
+    Logger.log(msg);
+    return msg;
+  } finally {
+    lock.releaseLock();
+  }
 }
