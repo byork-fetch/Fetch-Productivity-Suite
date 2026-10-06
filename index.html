@@ -533,17 +533,36 @@ function apiGet(action, params) {
   if (params) {
     Object.keys(params).forEach(function(k){ url += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(params[k]); });
   }
-  return fetch(url).then(function(r){ return r.json(); }).then(handleAuthResult);
+  return fetchJsonWithTimeout(url).then(handleAuthResult);
+}
+
+// fetch() has no timeout of its own, so a stuck request used to leave a
+// spinner up forever. Give up after 60s, and turn a non-JSON reply (e.g. a
+// Google "authorization required" page) into a readable error.
+function fetchJsonWithTimeout(url, opts, ms){
+  ms = ms || 60000;
+  var ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+  var timer = ctrl ? setTimeout(function(){ ctrl.abort(); }, ms) : null;
+  var o = opts || {}; if (ctrl) o.signal = ctrl.signal;
+  return fetch(url, o).then(function(r){
+    return r.text().then(function(t){
+      try { return JSON.parse(t); }
+      catch(e){ console.error("[API] non-JSON response (HTTP "+r.status+"):", t.slice(0,500)); throw new Error("Server returned an unexpected response (HTTP "+r.status+"). Check the Apps Script deployment."); }
+    });
+  }, function(err){
+    if (err && err.name === "AbortError") throw new Error("The server took too long to respond.");
+    throw err;
+  }).finally(function(){ if (timer) clearTimeout(timer); });
 }
 
 function apiPost(payload) {
   payload.dashSecret = DASH_SECRET;
   payload.session = currentSessionToken();
-  return fetch(EXEC_URL, {
+  return fetchJsonWithTimeout(EXEC_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload)
-  }).then(function(r){ return r.json(); }).then(handleAuthResult);
+  }).then(handleAuthResult);
 }
 
 // ============================================================
@@ -570,6 +589,7 @@ function handleGoogleSignIn(response) {
     // returns who you are plus a session token for later requests.
     apiGet("signIn", { idToken: response.credential })
       .then(function(user) {
+        console.log("[SignIn] server replied:", user && (user.authenticated ? "authenticated as " + user.email : user.error));
         document.getElementById("app-loading").style.display = "none";
         if (!user || !user.authenticated) {
           document.getElementById("login-screen").classList.add("visible");
@@ -582,7 +602,8 @@ function handleGoogleSignIn(response) {
       .catch(function(err) {
         document.getElementById("app-loading").style.display = "none";
         document.getElementById("login-screen").classList.add("visible");
-        showLoginError("Server error: " + err);
+        console.error("[SignIn] failed:", err);
+        showLoginError("Server error: " + (err && err.message ? err.message : err));
       });
   } catch(e) { showLoginError("Sign-in failed: " + e); }
 }
@@ -1609,7 +1630,9 @@ function loadTeamData(){
   var start=document.getElementById("teamStartDate").value,end=document.getElementById("teamEndDate").value;
   if(!start||!end){toast("error","Please select a date range");return;}
   document.getElementById("teamContent").innerHTML='<div class="loading-center"><div class="spinner"></div></div>';
-  var calls = [ apiGet("getTeamData",{start:start,end:end,email:state.user.email}), apiGet("getReviewedFlags") ];
+  // Reviewed-flag lists only matter to supervisors/admins (Needs Attention);
+  // analysts skip those requests entirely.
+  var calls = [ apiGet("getTeamData",{start:start,end:end}), state.user.isSupervisor ? apiGet("getReviewedFlags") : Promise.resolve([]) ];
   if (isAdminUser()) calls.push(apiGet("getReviewedFlagDetails"));
   Promise.all(calls).then(function(results){
     var data=results[0], reviewed=results[1], archived=results[2];
