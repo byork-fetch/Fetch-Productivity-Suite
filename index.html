@@ -162,6 +162,7 @@ textarea{resize:vertical;min-height:80px;}
 .platform-filter-btn.active[data-platform="RADAR"]{background:hsl(45,90%,45%);}
 .team-section{margin-bottom:1.5rem;}
 .team-section-header{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;font-weight:700;font-size:.95rem;}
+.team-grid-solo{display:flex !important;justify-content:center;}.team-grid-solo .analyst-card{width:100%;max-width:340px;}
 .team-grid{background:var(--card);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);padding:1.25rem;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:1rem;}
 .analyst-card{background:var(--muted-bg);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;cursor:pointer;transition:all .2s;}
 .analyst-card:hover{box-shadow:var(--shadow-soft);transform:translateY(-2px);}
@@ -357,7 +358,7 @@ textarea{resize:vertical;min-height:80px;}
           </div>
           <div id="supervisorFilters" class="tabs" style="margin:0;justify-content:center"></div>
           <div id="roleFilters" class="tabs" style="margin:0;justify-content:center"></div>
-          <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;justify-content:center">
+          <div id="teamSortRow" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;justify-content:center">
             <label style="font-size:.82rem;font-weight:600;color:var(--text-muted)">Sort by:</label>
             <select id="teamSortSelect" class="form-select" style="width:auto">
               <option value="name">Name (A–Z)</option>
@@ -1586,7 +1587,7 @@ function loadTeamData(){
   var start=document.getElementById("teamStartDate").value,end=document.getElementById("teamEndDate").value;
   if(!start||!end){toast("error","Please select a date range");return;}
   document.getElementById("teamContent").innerHTML='<div class="loading-center"><div class="spinner"></div></div>';
-  var calls = [ apiGet("getTeamData",{start:start,end:end}), apiGet("getReviewedFlags") ];
+  var calls = [ apiGet("getTeamData",{start:start,end:end,email:state.user.email}), apiGet("getReviewedFlags") ];
   if (isAdminUser()) calls.push(apiGet("getReviewedFlagDetails"));
   Promise.all(calls).then(function(results){
     var data=results[0], reviewed=results[1], archived=results[2];
@@ -1616,7 +1617,18 @@ var OFF_CLOCK_TASKS=["Lunch"];
 function _taskMatches(task,list){var t=String(task||"").toLowerCase();return list.some(function(s){return t.includes(s.toLowerCase());});}
 function calcUtilization(entries){var onClock=entries.filter(function(e){return!_taskMatches(e.task,OFF_CLOCK_TASKS);});if(!onClock.length)return 0;var total=sum(onClock,"duration"),prod=onClock.filter(function(e){return _taskMatches(e.task,UTILIZED_TASKS);});return total?Math.round(sum(prod,"duration")/total*100):0;}
 
+// Team / Role / Sort controls are admin-only. Everyone else gets just the
+// date period controls, with the default (all teams, all roles, A–Z) view.
+function applyTeamFilterVisibility(){
+  var admin=isAdminUser();
+  ["supervisorFilters","roleFilters"].forEach(function(id){var el=document.getElementById(id);if(el)el.style.display=admin?"":"none";});
+  var sortRow=document.getElementById("teamSortRow");if(sortRow)sortRow.style.display=admin?"flex":"none";
+  if(!admin){state.selectedSupervisor=null;state.selectedRole=null;state.teamSortMode="name";var ss=document.getElementById("teamSortSelect");if(ss)ss.value="name";}
+}
+
 function renderSupervisorFilters(assignments){
+  applyTeamFilterVisibility();
+  if(!isAdminUser()){document.getElementById("supervisorFilters").innerHTML="";return;}
   var visible=(assignments||[]).filter(function(a){ return !isHiddenAssignment(a); });
   var supers={};visible.forEach(function(a){supers[a.supervisor_email]=a.team_name||a.supervisor_email;});
   var html='<button class="tab-btn '+(state.selectedSupervisor===null?"active":"")+'" onclick="setSupervisorFilter(null)">All Teams</button>';
@@ -1631,6 +1643,7 @@ function getEffectiveRole(a){ return (a.role && a.role.trim()) ? a.role.trim() :
 function renderRoleFilters(assignments){
   var el = document.getElementById("roleFilters");
   if (!el) return;
+  if (!isAdminUser()) { el.innerHTML = ""; return; }
   var visible = (assignments||[]).filter(function(a){ return !isHiddenAssignment(a); });
   var roles = [...new Set(visible.map(getEffectiveRole))].sort();
   if (roles.length <= 1) { el.innerHTML = ""; return; }
@@ -1868,7 +1881,17 @@ function renderTeamContent(data){
   var allCases=data.cases||[],groups={};
   visibleAssignments.forEach(function(a){var key=a.team_name||a.supervisor_email;if(!groups[key])groups[key]={label:key,members:[]};var me=data.entries.filter(function(e){return e.analyst===a.analyst_name;}),mc=allCases.filter(function(c){return c.analyst===a.analyst_name;}),aht=ahtFromCases(mc);groups[key].members.push({name:a.analyst_name,role:a.role||"PI Analyst",totalSecs:sum(me,"duration"),util:calcUtilization(me),lastEntry:me.length?me.sort(function(a,b){return b.date.localeCompare(a.date);})[0].date:null,caseCount:mc.length,ahtSec:aht.avgSec});});
   sortTeamMembers(Object.values(groups));
-  document.getElementById("teamContent").innerHTML=Object.values(groups).map(function(g){return '<div class="team-section"><div class="team-section-header"><span>'+esc(g.label)+'</span><span class="badge">'+g.members.length+' Analysts</span></div><div class="team-grid">'+g.members.map(function(m){return '<div class="analyst-card" onclick="viewAnalystDetail(\''+esc(m.name)+'\')"><h3>'+esc(m.name)+'</h3><p class="role">'+esc(m.role)+'</p><div class="analyst-meta"><div class="analyst-meta-row"><span>🕐</span><span class="lbl">Total:</span> <strong>'+fmtDurationShort(m.totalSecs)+'</strong></div><div class="analyst-meta-row"><span>📊</span><span class="lbl">Utilization:</span> <strong class="'+(m.util>=75?"util-good":"util-warn")+'">'+m.util+'%</strong></div><div class="analyst-meta-row"><span>🛡️</span><span class="lbl">Cases:</span> <strong>'+m.caseCount+'</strong></div><div class="analyst-meta-row"><span>⏱️</span><span class="lbl">AHT:</span> <strong>'+fmtSeconds(m.ahtSec)+'</strong></div>'+(m.lastEntry?'<div class="analyst-meta-row"><span>📅</span><span class="lbl">Last Entry:</span> <strong>'+m.lastEntry+'</strong></div>':'')+' </div></div>';}).join("")+'</div></div>';}).join("");
+  // Non-supervisors only ever see their own card: show how many people are
+  // on their team (count only, from role labels the server sends without
+  // names) and center the single card.
+  var soloView=!state.user.isSupervisor;
+  if(soloView){
+    // Drop non-analyst roles (coordinators etc.) from the count; the team
+    // name itself isn't checked since it's the viewer's own team.
+    var teammates=(data.teammateRoles||[]).filter(function(a){return HIDDEN_ROLE_LABELS.indexOf(getEffectiveRole(a))===-1;});
+    Object.values(groups).forEach(function(g){g.teamCount=teammates.length||g.members.length;});
+  }
+  document.getElementById("teamContent").innerHTML=Object.values(groups).map(function(g){return '<div class="team-section"><div class="team-section-header"><span>'+esc(g.label)+'</span><span class="badge">'+(g.teamCount||g.members.length)+' Analyst'+((g.teamCount||g.members.length)===1?'':'s')+'</span></div><div class="team-grid'+(soloView?' team-grid-solo':'')+'">'+g.members.map(function(m){return '<div class="analyst-card" onclick="viewAnalystDetail(\''+esc(m.name)+'\')"><h3>'+esc(m.name)+'</h3><p class="role">'+esc(m.role)+'</p><div class="analyst-meta"><div class="analyst-meta-row"><span>🕐</span><span class="lbl">Total:</span> <strong>'+fmtDurationShort(m.totalSecs)+'</strong></div><div class="analyst-meta-row"><span>📊</span><span class="lbl">Utilization:</span> <strong class="'+(m.util>=75?"util-good":"util-warn")+'">'+m.util+'%</strong></div><div class="analyst-meta-row"><span>🛡️</span><span class="lbl">Cases:</span> <strong>'+m.caseCount+'</strong></div><div class="analyst-meta-row"><span>⏱️</span><span class="lbl">AHT:</span> <strong>'+fmtSeconds(m.ahtSec)+'</strong></div>'+(m.lastEntry?'<div class="analyst-meta-row"><span>📅</span><span class="lbl">Last Entry:</span> <strong>'+m.lastEntry+'</strong></div>':'')+' </div></div>';}).join("")+'</div></div>';}).join("");
 }
 
 function sortTeamMembers(groups){
