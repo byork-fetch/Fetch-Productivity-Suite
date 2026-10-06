@@ -171,7 +171,7 @@ function doGet(e) {
         return jsonResponse(getDashboardData(params.start, params.end, params.priorStart, params.priorEnd));
       }
       if (action === "getTeamData") {
-        return jsonResponse(getTeamData(params.start, params.end));
+        return jsonResponse(getTeamData(params.start, params.end, params.email));
       }
       if (action === "getAssignments") {
         return jsonResponse(getAssignmentsList());
@@ -490,7 +490,31 @@ function addTimeEntryData(entry, callerEmail) {
 // ============================================================
 // TEAM DIRECTORY
 // ============================================================
-function getTeamData(startDate, endDate) {
+// Team Directory payload, scoped to the caller. Supervisors/admins get the
+// full team. Everyone else gets ONLY their own assignment, entries and
+// cases, plus teammateRoles (role labels only, no names) so the page can
+// show how many people are on their team without exposing anyone else.
+function getTeamData(startDate, endDate, callerEmail) {
+  var full = _getTeamDataFull(startDate, endDate);
+  if (!full || full.error) return full;
+  var record = callerEmail ? (getUserRecord(callerEmail) || {}) : {};
+  if (isPrivileged(record.role)) return full;
+
+  var myName = record.display_name || "";
+  var mine = (full.assignments || []).filter(function(a){ return a.analyst_name === myName; });
+  var teamKey = mine.length ? (mine[0].team_name || mine[0].supervisor_email) : null;
+  var teammateRoles = teamKey ? (full.assignments || [])
+    .filter(function(a){ return (a.team_name || a.supervisor_email) === teamKey; })
+    .map(function(a){ return { team_name: a.team_name, supervisor_email: a.supervisor_email, role: a.role }; }) : [];
+  return {
+    assignments: mine,
+    entries: (full.entries || []).filter(function(e){ return e.analyst === myName; }),
+    cases: (full.cases || []).filter(function(c){ return c.analyst === myName; }),
+    teammateRoles: teammateRoles
+  };
+}
+
+function _getTeamDataFull(startDate, endDate) {
   try {
     // Depends on both time_entries AND Cases (assignments come from
     // team_assignments too, but that sheet has no write endpoint in this
