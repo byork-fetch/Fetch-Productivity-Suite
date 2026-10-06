@@ -222,7 +222,7 @@ textarea{resize:vertical;min-height:80px;}
       <div class="header-top">
         <div><h1>PI Productivity Suite</h1></div>
         <div class="header-actions">
-          <button id="refreshBtn" class="btn btn-ghost" title="Reload the latest data">🔄 Refresh</button>
+          <button id="refreshBtn" class="btn btn-ghost" title="Refresh data" aria-label="Refresh data"><span class="refresh-icon">🔄</span></button>
           <button id="themeToggle" class="btn btn-ghost" title="Toggle theme">🌙</button>
           <button id="themePaletteBtn" class="btn btn-ghost" title="Choose theme">🎨</button>
           <button id="teamDirBtn" class="btn btn-ghost" style="display:none">👥 Team Directory</button>
@@ -2150,11 +2150,10 @@ function refreshCurrentView(){
   }
   if(btn){
     btn.disabled=true;btn.classList.add("spinning");
-    btn.innerHTML='<span class="refresh-icon">🔄</span> Refreshing…';
+    btn.title="Refreshing…";
     setTimeout(function(){
       btn.disabled=false;btn.classList.remove("spinning");
-      btn.innerHTML='🔄 Refresh';
-      btn.title="Last refreshed "+new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
+      btn.title="Refresh data (last refreshed "+new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})+")";
     },3000);
   }
 }
