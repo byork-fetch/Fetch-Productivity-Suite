@@ -182,6 +182,8 @@ textarea{resize:vertical;min-height:80px;}
 .date-input{padding:.4rem .7rem;border:1px solid var(--border);border-radius:.5rem;background:var(--card);color:var(--text);font-size:.83rem;}
 .spinner{width:2rem;height:2rem;border-radius:50%;border:3px solid var(--border);border-top-color:var(--primary);animation:spin .7s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
+#refreshBtn.spinning .refresh-icon{display:inline-block;animation:spin .8s linear infinite;}
+#refreshBtn:disabled{opacity:.7;cursor:default;}
 .loading-center{display:flex;justify-content:center;padding:3rem;}
 .empty{text-align:center;padding:2.5rem;color:var(--text-muted);font-size:.9rem;}
 #toast-container{position:fixed;top:1rem;right:1rem;z-index:999;display:flex;flex-direction:column;gap:.5rem;}
@@ -220,6 +222,7 @@ textarea{resize:vertical;min-height:80px;}
       <div class="header-top">
         <div><h1>PI Productivity Suite</h1></div>
         <div class="header-actions">
+          <button id="refreshBtn" class="btn btn-ghost" title="Reload the latest data">🔄 Refresh</button>
           <button id="themeToggle" class="btn btn-ghost" title="Toggle theme">🌙</button>
           <button id="themePaletteBtn" class="btn btn-ghost" title="Choose theme">🎨</button>
           <button id="teamDirBtn" class="btn btn-ghost" style="display:none">👥 Team Directory</button>
@@ -495,8 +498,15 @@ var GOOGLE_CLIENT_ID = "422172167913-rv8addd23lt5085c9ha235sblcpih199.apps.googl
 // ============================================================
 // API HELPERS — replaces google.script.run
 // ============================================================
+// While a manual Refresh is in progress, every read asks the server to skip
+// its cache (fresh=1) so the numbers are current, not up to 5 min old.
+// Kept as a short time window rather than a one-shot flag because some
+// loads chain a follow-up request after the first one returns.
+var _freshUntil = 0;
+
 function apiGet(action, params) {
   var url = EXEC_URL + "?action=" + encodeURIComponent(action) + "&secret=" + encodeURIComponent(DASH_SECRET);
+  if (Date.now() < _freshUntil) url += "&fresh=1";
   if (params) {
     Object.keys(params).forEach(function(k){ url += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(params[k]); });
   }
@@ -757,6 +767,7 @@ function bootWithUser(user) {
     }
   });
   document.getElementById("userMgmtBtn").addEventListener("click", function(){ showView("users"); loadUsers(); });
+  document.getElementById("refreshBtn").addEventListener("click", refreshCurrentView);
   document.getElementById("analystFilter").addEventListener("change", function(){ state.selectedAnalyst=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
   document.getElementById("teamFilterHeader").addEventListener("change", function(){ state.dashboardTeamFilter=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
   document.getElementById("roleFilterHeader").addEventListener("change", function(){ state.dashboardRoleFilter=this.value; persistFilterPrefs(); applyAnalystFilter(); applyCaseFilter(); });
@@ -2115,6 +2126,39 @@ function showView(view){
   var teamBtn = document.getElementById("teamDirBtn");
   if (teamBtn) teamBtn.innerHTML = (view==="team") ? "🏠 Dashboard" : "👥 Team Directory";
 }
+// ============================================================
+// REFRESH — reloads whatever view is showing with fresh data, keeping
+// the selected period, filters and analyst. No page reload needed.
+// ============================================================
+function currentView(){
+  var v=["dashboard","team","users"].filter(function(x){var el=document.getElementById("view-"+x);return el&&el.style.display!=="none";});
+  return v[0]||"dashboard";
+}
+function refreshCurrentView(){
+  var btn=document.getElementById("refreshBtn");
+  if(btn&&btn.disabled)return;
+  _freshUntil=Date.now()+20000;
+  var view=currentView();
+  if(view==="dashboard"){
+    fetchDashboardData();
+    if(state.trendsLoaded)loadTrendsData();
+    loadMonths();
+  }else if(view==="team"){
+    if(document.getElementById("teamStartDate").value&&document.getElementById("teamEndDate").value)loadTeamData();
+  }else if(view==="users"){
+    loadUsers();
+  }
+  if(btn){
+    btn.disabled=true;btn.classList.add("spinning");
+    btn.innerHTML='<span class="refresh-icon">🔄</span> Refreshing…';
+    setTimeout(function(){
+      btn.disabled=false;btn.classList.remove("spinning");
+      btn.innerHTML='🔄 Refresh';
+      btn.title="Last refreshed "+new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
+    },3000);
+  }
+}
+
 function toggleCollapsible(id){var c=document.getElementById(id+"Content"),t=c?c.previousElementSibling:null;if(!c)return;c.classList.toggle("open");if(t)t.classList.toggle("open");}
 
 // ============================================================
