@@ -83,12 +83,17 @@ function combinedCacheVersion(domains) {
 // unavailable, empty, or the result is too large to cache (Script Cache
 // has a 100KB per-key limit) — caching is a speed optimization here, never
 // a hard dependency.
+// Set per request by doGet when the dashboard's Refresh button sends
+// fresh=1: reads skip the cache and go to the sheet, then re-cache the
+// fresh result so everyone else gets the updated data too.
+var _bypassCache = false;
+
 function cachedCall(key, ttlSeconds, computeFn, domains) {
   domains = domains && domains.length ? domains : ["misc"];
   var cache = CacheService.getScriptCache();
   var fullKey = key + ":v" + combinedCacheVersion(domains);
   try {
-    var hit = cache.get(fullKey);
+    var hit = _bypassCache ? null : cache.get(fullKey);
     if (hit) return JSON.parse(hit);
   } catch(e) { /* fall through and compute fresh */ }
 
@@ -131,6 +136,7 @@ function doGet(e) {
 
   // Data requests from the GitHub Pages dashboard
   var action = params.action || "";
+  _bypassCache = params.fresh === "1";
   if (action) {
     // Verify dashboard secret on all data requests
     if (params.secret !== DASHBOARD_SECRET) {
@@ -234,38 +240,64 @@ function getUserByEmail(email) {
 // ============================================================
 // TIME ENTRIES
 // ============================================================
+// Reads one time_entries-shaped sheet (live or archive) for a date range.
+function _readEntriesFromSheet(sheet, startDate, endDate) {
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  // Column N (14) = entry_source — "manual" for time added after the
+  // fact (dashboard Add Missed Time, or the extension's untracked-gap
+  // categorize), blank for normal tracked time. Read defensively: an
+  // older sheet may not have a 14th column yet.
+  var nCols   = Math.min(14, sheet.getMaxColumns());
+  var data    = sheet.getRange(2, 1, sheet.getLastRow() - 1, nCols).getValues();
+  var headers = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id","entry_source"].slice(0, nCols);
+  var start = new Date(startDate + "T00:00:00"), end = new Date(endDate + "T23:59:59");
+  var tz = Session.getScriptTimeZone();
+  var results = [];
+  var skipped = 0;
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    if (!row[0] && !row[1]) continue;
+    var dateVal   = row[5];
+    var entryDate = (dateVal instanceof Date) ? dateVal : new Date(dateVal + "T00:00:00");
+    if (isNaN(entryDate.getTime())) { skipped++; continue; } // malformed date — skip, but track it
+    if (entryDate >= start && entryDate <= end) {
+      var entry = {};
+      for (var j = 0; j < headers.length; j++) {
+        var val = row[j];
+        entry[headers[j]] = (val instanceof Date) ? Utilities.formatDate(val, tz, "yyyy-MM-dd") : (val === "" ? null : val);
+      }
+      results.push(entry);
+    }
+  }
+  if (skipped > 0) Logger.log("_readEntriesFromSheet(" + sheet.getName() + "): skipped " + skipped + " row(s) with unparseable dates for range " + startDate + " to " + endDate);
+  return results;
+}
+
 function getTimeEntries(startDate, endDate) {
   try {
     return cachedCall("entries:" + startDate + ":" + endDate, 300, function() {
-      var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
-      var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
-      if (!sheet || sheet.getLastRow() < 2) return [];
-      // Column N (14) = entry_source — "manual" for time added after the
-      // fact (dashboard Add Missed Time, or the extension's untracked-gap
-      // categorize), blank for normal tracked time. Read defensively: an
-      // older sheet may not have a 14th column yet.
-      var nCols   = Math.min(14, sheet.getMaxColumns());
-      var data    = sheet.getRange(2, 1, sheet.getLastRow() - 1, nCols).getValues();
-      var headers = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id","entry_source"].slice(0, nCols);
-      var start = new Date(startDate + "T00:00:00"), end = new Date(endDate + "T23:59:59");
-      var results = [];
-      var skipped = 0;
-      for (var i = 0; i < data.length; i++) {
-        var row = data[i];
-        if (!row[0] && !row[1]) continue;
-        var dateVal   = row[5];
-        var entryDate = (dateVal instanceof Date) ? dateVal : new Date(dateVal + "T00:00:00");
-        if (isNaN(entryDate.getTime())) { skipped++; continue; } // malformed date — skip, but track it
-        if (entryDate >= start && entryDate <= end) {
-          var entry = {};
-          for (var j = 0; j < headers.length; j++) {
-            var val = row[j];
-            entry[headers[j]] = (val instanceof Date) ? Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd") : (val === "" ? null : val);
-          }
-          results.push(entry);
+      var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var results = _readEntriesFromSheet(ss.getSheetByName(SHEET_TIME_ENTRIES), startDate, endDate);
+
+      // Range reaches past the archive cutoff: merge in archived rows too.
+      // Recent ranges never pay for this. Archived entries are flagged
+      // archived:true (they're read-only — edits only touch the live sheet).
+      if (_rangeNeedsArchive(startDate)) {
+        var archTab = _getArchiveTabIfExists(SHEET_TIME_ENTRIES);
+        if (archTab) {
+          var seen = {};
+          results.forEach(function(e){ seen[String(e.id) + "|" + String(e.sheet_row_id || "")] = true; });
+          _readEntriesFromSheet(archTab, startDate, endDate).forEach(function(e){
+            var k = String(e.id) + "|" + String(e.sheet_row_id || "");
+            if (seen[k]) return; // mid-archive-run overlap: row is briefly in both
+            seen[k] = true;
+            e.archived = true;
+            results.push(e);
+          });
         }
+        // Keep oldest-first order, same as a live-only read.
+        results.sort(function(a, b){ return String(a.date).localeCompare(String(b.date)) || String(a.start_time || "").localeCompare(String(b.start_time || "")); });
       }
-      if (skipped > 0) Logger.log("getTimeEntries: skipped " + skipped + " row(s) with unparseable dates for range " + startDate + " to " + endDate);
       return results;
     }, ["entries"]);
   } catch(e) { return { error: e.toString() }; }
@@ -278,6 +310,9 @@ function getAvailableMonths() {
       var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
       if (!sheet || sheet.getLastRow() < 2) return [];
       var data = sheet.getRange(2, 6, sheet.getLastRow() - 1, 1).getValues();
+      // Include months that only exist in the archive, so they stay pickable.
+      var archTab = _getArchiveTabIfExists(SHEET_TIME_ENTRIES);
+      if (archTab && archTab.getLastRow() > 1) data = data.concat(archTab.getRange(2, 6, archTab.getLastRow() - 1, 1).getValues());
       var months = {};
       for (var i = 0; i < data.length; i++) {
         var val = data[i][0];
@@ -306,7 +341,7 @@ function updateTimeEntryData(id, updates, callerEmail) {
     for (var i = 0; i < data.length; i++) {
       if (data[i][0].toString() === id.toString()) { rowIndex = i + 2; entryAnalyst = data[i][1].toString(); break; }
     }
-    if (rowIndex === -1) return { error: "Entry not found" };
+    if (rowIndex === -1) return { error: "Entry not found (entries older than " + ARCHIVE_MONTHS + " months are archived and can't be edited)" };
     if (!isPrivileged(role) && entryAnalyst !== displayName) {
       Logger.log("updateTimeEntryData permission denied — entry analyst='" + entryAnalyst + "', caller displayName='" + displayName + "', caller email=" + callerEmail);
       return { error: "Permission denied" };
@@ -543,6 +578,7 @@ var CASES_CACHE_TTL = 900; // was 120s, then 300s — now that "cases" is its ow
 function _getAllCasesRaw() {
   var version = getCacheVersion("cases");
   if (_casesMemory && _casesMemoryVersion === version) return _casesMemory; // already read this execution, and still current
+  if (_bypassCache) return _readCasesLiveAndCache(version);
 
   var cache = CacheService.getScriptCache();
   var metaKey = "cases_all_meta:v" + version;
@@ -565,6 +601,12 @@ function _getAllCasesRaw() {
     }
   } catch(e) { /* fall through to a live read */ }
 
+  return _readCasesLiveAndCache(version);
+}
+
+function _readCasesLiveAndCache(version) {
+  var cache = CacheService.getScriptCache();
+  var metaKey = "cases_all_meta:v" + version;
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   var sheet = ss.getSheetByName(SHEET_CASES);
   var results = [];
@@ -608,10 +650,26 @@ function _readAllCases(startDate, endDate) {
   try {
     var all = _getAllCasesRaw();
     var results = [];
+    var seen = {};
     for (var i = 0; i < all.length; i++) {
       var r = all[i];
       if (r[0] < startDate || r[0] > endDate) continue;
+      seen[r[0] + "|" + r[2] + "|" + r[3]] = true;
       results.push({ date: r[0], analyst: r[1], platform: r[2], case_id: r[3], source: r[4], handle_seconds: r[5], solved_at: r[6], timing_method: r[7] });
+    }
+    // Range reaches past the archive cutoff: merge in archived cases too.
+    if (_rangeNeedsArchive(startDate)) {
+      var arch = _getArchivedCasesRaw();
+      for (var a = 0; a < arch.length; a++) {
+        var x = arch[a];
+        if (x[0] < startDate || x[0] > endDate) continue;
+        var k = x[0] + "|" + x[2] + "|" + x[3];
+        if (seen[k]) continue; // mid-archive-run overlap: row is briefly in both
+        seen[k] = true;
+        results.push({ date: x[0], analyst: x[1], platform: x[2], case_id: x[3], source: x[4], handle_seconds: x[5], solved_at: x[6], timing_method: x[7], archived: true });
+      }
+      // Keep oldest-first order, same as a live-only read.
+      results.sort(function(a, b){ return a.date.localeCompare(b.date) || String(a.solved_at).localeCompare(String(b.solved_at)); });
     }
     return results;
   } catch(e) { return []; }
@@ -1540,8 +1598,11 @@ function handleCaseRow(payload) {
 // that limit. The archive file is also the clean handoff point for the
 // data team's Snowflake integration.
 //
-// Every dashboard view reaches back at most 90 days (12 weeks for case
-// trends), so nothing the dashboard shows is affected by a 4-month cutoff.
+// The dashboard can still see archived data: any read whose range starts
+// before the cutoff (e.g. a Custom range from 6 months ago) also pulls the
+// matching rows from the archive and merges them in. Recent views (Today,
+// This Week, 30/60/90 days, 12-week trends) never touch the archive, so
+// they stay fast. Archived time entries are read-only on the dashboard.
 //
 // SETUP (once): run installArchiveTrigger() from the Apps Script editor.
 // It schedules archiveOldData() nightly (~2am script time). The first run
@@ -1564,6 +1625,54 @@ var ARCHIVE_WRITE_CHUNK   = 5000;
 
 var TIME_ENTRY_HEADERS = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id","entry_source"];
 var CASE_HEADERS       = ["Date","Analyst","Platform","Case ID","Source","Handle (sec)","Handle (min)","Solved At","dedupe_key","Timing Method"];
+
+// ---- Reading the archive back (dashboard ranges older than the cutoff) ----
+
+// True when a requested range starts before the archive cutoff, i.e. some
+// of its rows may have been moved to the archive. The nightly job only ever
+// archives rows older than the cutoff, so newer ranges never need it.
+function _rangeNeedsArchive(startDate) {
+  if (!startDate) return false;
+  if (!PropertiesService.getScriptProperties().getProperty(ARCHIVE_PROP_KEY)) return false;
+  return String(startDate) < _archiveCutoffYmd();
+}
+
+var _archiveSsMemo = null;
+function _getArchiveTabIfExists(name) {
+  try {
+    var id = PropertiesService.getScriptProperties().getProperty(ARCHIVE_PROP_KEY);
+    if (!id) return null;
+    if (!_archiveSsMemo) _archiveSsMemo = SpreadsheetApp.openById(id);
+    return _archiveSsMemo.getSheetByName(name);
+  } catch(e) {
+    Logger.log("Archive spreadsheet not readable: " + e);
+    return null;
+  }
+}
+
+// Same row shape as _getAllCasesRaw(). Memoized per execution and versioned
+// by the "cases" cache domain, which the nightly archive run bumps, so it
+// re-reads only after the archive actually changed.
+var _archCasesMemo = null, _archCasesMemoVersion = null;
+function _getArchivedCasesRaw() {
+  var version = getCacheVersion("cases");
+  if (_archCasesMemo && _archCasesMemoVersion === version) return _archCasesMemo;
+  var results = [];
+  var sheet = _getArchiveTabIfExists(SHEET_CASES);
+  if (sheet && sheet.getLastRow() >= 2) {
+    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 10).getValues();
+    var tz = Session.getScriptTimeZone();
+    for (var i = 0; i < data.length; i++) {
+      var row = data[i];
+      var dateStr = (row[0] instanceof Date) ? Utilities.formatDate(row[0], tz, "yyyy-MM-dd") : String(row[0] || "").substring(0, 10);
+      if (!dateStr) continue;
+      results.push([dateStr, String(row[1]||""), String(row[2]||""), String(row[3]||""), String(row[4]||""), (typeof row[5]==="number"&&row[5]>0)?row[5]:null, String(row[7]||""), String(row[9]||"")]);
+    }
+  }
+  _archCasesMemo = results;
+  _archCasesMemoVersion = version;
+  return results;
+}
 
 function installArchiveTrigger() {
   var triggers = ScriptApp.getProjectTriggers();
