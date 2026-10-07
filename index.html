@@ -540,8 +540,12 @@ function apiGet(action, params) {
   var t0 = Date.now();
   function attempt(n){
     return fetchJsonWithTimeout(url).catch(function(err){
+      // A Google 404 here usually means our request DID run on the server but
+      // took long enough (cold cache) that Google's hand-off page expired.
+      // That run still finishes and fills the cache, so wait long enough for
+      // it before retrying; a quick retry just starts another slow run.
       if (err && /HTTP 404/.test(err.message) && n < 3) {
-        var wait = [1000, 3000, 6000][n];
+        var wait = [15000, 25000, 40000][n];
         console.warn("[API] "+action+" got a Google 404 hand-off error, retry "+(n+1)+" of 3 in "+(wait/1000)+"s");
         return new Promise(function(r){ setTimeout(r, wait); }).then(function(){ return attempt(n+1); });
       }
