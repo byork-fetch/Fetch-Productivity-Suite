@@ -534,7 +534,21 @@ function apiGet(action, params) {
   if (params) {
     Object.keys(params).forEach(function(k){ url += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(params[k]); });
   }
-  return fetchJsonWithTimeout(url).then(handleAuthResult);
+  // Apps Script occasionally answers a GET with a 404 from its
+  // googleusercontent hand-off page (a Google-side hiccup, not our code).
+  // Reads are safe to repeat, so retry once quietly before reporting it.
+  var t0 = Date.now();
+  return fetchJsonWithTimeout(url).catch(function(err){
+    if (err && /HTTP 404/.test(err.message)) {
+      console.warn("[API] "+action+" got a Google 404 hand-off error, retrying once");
+      return new Promise(function(r){ setTimeout(r, 800); }).then(function(){ return fetchJsonWithTimeout(url); });
+    }
+    throw err;
+  }).then(function(json){
+    var secs = (Date.now()-t0)/1000;
+    if (secs > 5) console.log("[API] "+action+" took "+secs.toFixed(1)+"s");
+    return json;
+  }).then(handleAuthResult);
 }
 
 // fetch() has no timeout of its own, so a stuck request used to leave a
@@ -550,7 +564,7 @@ function fetchJsonWithTimeout(url, opts, ms){
   return fetch(url, o).then(function(r){
     return r.text().then(function(t){
       try { return JSON.parse(t); }
-      catch(e){ console.error("[API] non-JSON response (HTTP "+r.status+"):", t.slice(0,500)); throw new Error("Server returned an unexpected response (HTTP "+r.status+"). Check the Apps Script deployment."); }
+      catch(e){ console.warn("[API] non-JSON response (HTTP "+r.status+") from "+(String(url).match(/action=([^&]+)/)||[])[1]+":", t.slice(0,200)); throw new Error("Server returned an unexpected response (HTTP "+r.status+"). Check the Apps Script deployment."); }
     });
   }, function(err){
     if (err && err.name === "AbortError") throw new Error("The server took too long to respond.");
