@@ -34,6 +34,24 @@ function isAdminRole(role) {
 }
 
 // ============================================================
+// FAST DATE FORMATTING (v4.3)
+// Utilities.formatDate() is a call out to Google's servers (~1ms each).
+// Calling it once per row on a 50k-row sheet cost 40-80 seconds per load,
+// which was the real reason the Cases tab, Team Directory and the month
+// list were slow. A date column only holds a few hundred distinct days, so
+// each distinct value is formatted once and reused.
+// ============================================================
+var _ymdMemo = {};
+function _ymd(d, tz) {
+  var t = d.getTime();
+  if (isNaN(t)) return "";
+  var k = (tz || "") + "|" + t;
+  var v = _ymdMemo[k];
+  if (v === undefined) { v = Utilities.formatDate(d, tz || Session.getScriptTimeZone(), "yyyy-MM-dd"); _ymdMemo[k] = v; }
+  return v;
+}
+
+// ============================================================
 // CACHING — Sheets reads are the slowest part of every request.
 // We cache computed results (not raw sheet data) in Script Cache,
 // keyed with a version number so any write anywhere instantly
@@ -389,7 +407,7 @@ function _readEntriesFromSheet(sheet, startDate, endDate) {
       var entry = {};
       for (var j = 0; j < headers.length; j++) {
         var val = row[j];
-        entry[headers[j]] = (val instanceof Date) ? Utilities.formatDate(val, tz, "yyyy-MM-dd") : (val === "" ? null : val);
+        entry[headers[j]] = (val instanceof Date) ? _ymd(val, tz) : (val === "" ? null : val);
       }
       results.push(entry);
     }
@@ -447,10 +465,11 @@ function getAvailableMonths() {
       var archTab = _getArchiveTabIfExists(SHEET_TIME_ENTRIES);
       if (archTab && archTab.getLastRow() > 1) data = data.concat(archTab.getRange(2, 6, archTab.getLastRow() - 1, 1).getValues());
       var months = {};
+      var monthsTz = Session.getScriptTimeZone();
       for (var i = 0; i < data.length; i++) {
         var val = data[i][0];
         if (!val) continue;
-        var dateStr = (val instanceof Date) ? Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd") : val.toString();
+        var dateStr = (val instanceof Date) ? _ymd(val, monthsTz) : val.toString();
         if (dateStr.length >= 7) months[dateStr.substring(0, 7)] = true;
       }
       return Object.keys(months).sort(function(a,b){ return b.localeCompare(a); });
@@ -591,7 +610,7 @@ function addTimeEntryData(entry, callerEmail) {
       for (var i = 0; i < rows.length; i++) {
         var n = parseInt(rows[i][0]); if (!isNaN(n) && n > maxId) maxId = n;
         if (String(rows[i][1]) !== analyst) continue;
-        var rDate = (rows[i][5] instanceof Date) ? Utilities.formatDate(rows[i][5], tzr, "yyyy-MM-dd") : String(rows[i][5]).substring(0, 10);
+        var rDate = (rows[i][5] instanceof Date) ? _ymd(rows[i][5], tzr) : String(rows[i][5]).substring(0, 10);
         if (rDate !== dateStr) continue;
         var rs = _entryTimeMs(rDate, rows[i][7]), re = _entryTimeMs(rDate, rows[i][8]);
         if (rs === null || re === null) continue;
@@ -777,7 +796,7 @@ function _readCasesLiveAndCache(version) {
     var tz = Session.getScriptTimeZone();
     for (var i = 0; i < data.length; i++) {
       var row = data[i];
-      var dateStr = (row[0] instanceof Date) ? Utilities.formatDate(row[0], tz, "yyyy-MM-dd") : String(row[0] || "").substring(0, 10);
+      var dateStr = (row[0] instanceof Date) ? _ymd(row[0], tz) : String(row[0] || "").substring(0, 10);
       if (!dateStr) continue;
       // 8th element (index 7) is timing_method — "bulk" for RADAR cases
       // completed via a bulk-mark action (no individual open/close pair to
@@ -872,7 +891,7 @@ function _getCaseDateColumn() {
     var col = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
     for (var i = 0; i < col.length; i++) {
       var v = col[i][0];
-      dates.push((v instanceof Date) ? Utilities.formatDate(v, tz, "yyyy-MM-dd") : String(v || "").substring(0, 10));
+      dates.push((v instanceof Date) ? _ymd(v, tz) : String(v || "").substring(0, 10));
     }
   }
   console.log("Cases read timing: open " + (tB - tA) + "ms, getLastRow " + (tC - tB) + "ms, date column " + (Date.now() - tC) + "ms, rows " + dates.length);
@@ -1941,7 +1960,7 @@ function _getArchivedCasesRaw() {
     var tz = Session.getScriptTimeZone();
     for (var i = 0; i < data.length; i++) {
       var row = data[i];
-      var dateStr = (row[0] instanceof Date) ? Utilities.formatDate(row[0], tz, "yyyy-MM-dd") : String(row[0] || "").substring(0, 10);
+      var dateStr = (row[0] instanceof Date) ? _ymd(row[0], tz) : String(row[0] || "").substring(0, 10);
       if (!dateStr) continue;
       results.push([dateStr, String(row[1]||""), String(row[2]||""), String(row[3]||""), String(row[4]||""), (typeof row[5]==="number"&&row[5]>0)?row[5]:null, String(row[7]||""), String(row[9]||"")]);
     }
@@ -1967,7 +1986,7 @@ function _archiveCutoffYmd() {
 }
 
 function _archiveCellYmd(val, tz) {
-  if (val instanceof Date) return isNaN(val.getTime()) ? "" : Utilities.formatDate(val, tz, "yyyy-MM-dd");
+  if (val instanceof Date) return _ymd(val, tz);
   var s = String(val || "").trim();
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.substring(0, 10) : "";
 }
