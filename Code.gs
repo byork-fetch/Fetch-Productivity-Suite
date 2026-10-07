@@ -242,6 +242,7 @@ function doGet(e) {
   // Data requests from the GitHub Pages dashboard
   var action = params.action || "";
   _bypassCache = params.fresh === "1";
+  var _reqStart = Date.now();
   if (action) {
     // Verify dashboard secret on all data requests
     if (params.secret !== DASHBOARD_SECRET) {
@@ -254,6 +255,7 @@ function doGet(e) {
       var callerEmail = _verifySession(params.session);
       if (!callerEmail) return jsonResponse({ error: "AUTH_REQUIRED" });
       _caller = _getCallerRecord(callerEmail);
+      console.log("doGet " + action + " for " + callerEmail + " auth+user lookup " + (Date.now() - _reqStart) + "ms");
       if (action === "me") {
         return jsonResponse({ authenticated: true, email: _caller.email, role: _caller.role, isSupervisor: _caller.privileged, displayName: _caller.displayName });
       }
@@ -849,12 +851,23 @@ function getCaseEntriesWithPrior(startDate, endDate, priorStart, priorEnd) {
 // round trips the dashboard needs to make to get it.
 function getDashboardData(startDate, endDate, priorStart, priorEnd) {
   try {
+    // _timing (ms per step) is logged to Executions and returned so the
+    // browser console can show where a slow load spends its time.
+    var t0 = Date.now();
     var entries = getTimeEntries(startDate, endDate);
     if (entries && entries.error) return { error: entries.error };
+    var t1 = Date.now();
+    var cases = _readAllCases(startDate, endDate);
+    var t2 = Date.now();
+    var priorCases = _readAllCases(priorStart, priorEnd);
+    var t3 = Date.now();
+    var timing = { entriesMs: t1 - t0, casesMs: t2 - t1, priorCasesMs: t3 - t2, totalCaseRows: (_casesMemory || []).length };
+    console.log("getDashboardData timing " + JSON.stringify(timing));
     return {
       entries: entries,
-      cases: _readAllCases(startDate, endDate),
-      priorCases: _readAllCases(priorStart, priorEnd)
+      cases: cases,
+      priorCases: priorCases,
+      _timing: timing
     };
   } catch(e) { return { error: e.toString() }; }
 }
