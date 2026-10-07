@@ -131,7 +131,9 @@ function corsHeaders() {
   };
 }
 
+var _reqStartMs = null, _reqAction = "";
 function jsonResponse(data) {
+  if (_reqStartMs) console.log("doGet " + _reqAction + " total " + (Date.now() - _reqStartMs) + "ms");
   return ContentService
     .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
@@ -243,6 +245,7 @@ function doGet(e) {
   var action = params.action || "";
   _bypassCache = params.fresh === "1";
   var _reqStart = Date.now();
+  _reqStartMs = _reqStart; _reqAction = action;
   if (action) {
     // Verify dashboard secret on all data requests
     if (params.secret !== DASHBOARD_SECRET) {
@@ -397,7 +400,13 @@ function _readEntriesFromSheet(sheet, startDate, endDate) {
 
 function getTimeEntries(startDate, endDate) {
   try {
-    return cachedCall("entries:" + startDate + ":" + endDate, 300, function() {
+    // Cached for 60s by range, NOT reset by every extension sync (which
+    // happens constantly). Dashboard edits/imports and the archive run do
+    // reset it ("entriesEdit"), and 🔄 bypasses it.
+    var tkey = "entries2:" + startDate + ":" + endDate + ":e" + getCacheVersion("entriesEdit");
+    var hit = _chunkedCacheGet(tkey);
+    if (hit) return hit;
+    var fresh = (function() {
       var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
       var results = _readEntriesFromSheet(ss.getSheetByName(SHEET_TIME_ENTRIES), startDate, endDate);
 
@@ -421,13 +430,15 @@ function getTimeEntries(startDate, endDate) {
         results.sort(function(a, b){ return String(a.date).localeCompare(String(b.date)) || String(a.start_time || "").localeCompare(String(b.start_time || "")); });
       }
       return results;
-    }, ["entries"]);
+    })();
+    _chunkedCachePut(tkey, fresh, 60);
+    return fresh;
   } catch(e) { return { error: e.toString() }; }
 }
 
 function getAvailableMonths() {
   try {
-    return cachedCall("months", 300, function() {
+    return cachedCall("months", 600, function() {
       var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
       var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
       if (!sheet || sheet.getLastRow() < 2) return [];
@@ -443,7 +454,7 @@ function getAvailableMonths() {
         if (dateStr.length >= 7) months[dateStr.substring(0, 7)] = true;
       }
       return Object.keys(months).sort(function(a,b){ return b.localeCompare(a); });
-    }, ["entries"]);
+    }, ["entriesEdit"]);
   } catch(e) { return []; }
 }
 
@@ -486,7 +497,7 @@ function updateTimeEntryData(id, updates, callerEmail) {
     if (existingOriginal === "" || existingOriginal === null || existingOriginal === undefined) {
       sheet.getRange(rowIndex, 12).setValue(originalDuration);
     }
-    bumpCacheVersion("entries");
+    bumpCacheVersion("entries"); bumpCacheVersion("entriesEdit");
     return { success: true };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -600,7 +611,7 @@ function addTimeEntryData(entry, callerEmail) {
     var target = sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length);
     sheet.getRange(target.getRow(), 8, 1, 2).setNumberFormat("@"); // keep ISO times as text
     target.setValues([row]);
-    bumpCacheVersion("entries");
+    bumpCacheVersion("entries"); bumpCacheVersion("entriesEdit");
     return { success: true, id: maxId };
   } catch(e) {
     return { error: e.toString() };
@@ -642,7 +653,10 @@ function _getTeamDataFull(startDate, endDate) {
     // team_assignments too, but that sheet has no write endpoint in this
     // app — it's edited directly, so it isn't part of the versioned
     // invalidation and just relies on this cache's TTL to pick up changes).
-    return cachedCall("team:" + startDate + ":" + endDate, 300, function() {
+    var tdKey = "team2:" + startDate + ":" + endDate + ":e" + getCacheVersion("entriesEdit") + ":a" + getCacheVersion("casesArchive");
+    var tdHit = _chunkedCacheGet(tdKey);
+    if (tdHit) return tdHit;
+    var tdFresh = (function() {
       var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
       var taSheet = ss.getSheetByName(SHEET_TEAM_ASSIGN);
       if (!taSheet || taSheet.getLastRow() < 2) return { assignments: [], entries: [], cases: [] };
@@ -657,7 +671,9 @@ function _getTeamDataFull(startDate, endDate) {
       entries = entries.filter(function(e){ return !!visibleAnalysts[e.analyst]; });
       var cases = _readAllCases(startDate, endDate).filter(function(c){ return !!visibleAnalysts[c.analyst]; });
       return { assignments: assignments, entries: entries, cases: cases };
-    }, ["entries", "cases"]);
+    })();
+    if (tdFresh && !tdFresh.error) _chunkedCachePut(tdKey, tdFresh, 60);
+    return tdFresh;
   } catch(e) { return { error: e.toString() }; }
 }
 
@@ -1037,7 +1053,7 @@ function importCSVData(csvText, callerEmail) {
       existingIds[sheetRowId] = true; inserted++;
     }
     if (newRows.length > 0) sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 13).setValues(newRows);
-    if (inserted > 0) bumpCacheVersion("entries");
+    if (inserted > 0) { bumpCacheVersion("entries"); bumpCacheVersion("entriesEdit"); }
     return { success: true, inserted: inserted, skipped: skipped };
   } catch(e) { return { error: e.toString() }; }
 }
@@ -1440,7 +1456,7 @@ function getCaseTrends(weeksBack, analystFilter) {
           avgAhtMin: ahtSecs.length ? Math.round(ahtSecs.reduce(function(a,b){return a+b;},0)/ahtSecs.length/60*10)/10 : null
         };
       });
-    }, ["cases"]);
+    }, ["casesArchive"]);
   } catch(e) { return { error: e.toString() }; }
 }
 
@@ -2069,7 +2085,7 @@ function archiveOldData() {
         TIME_ENTRY_HEADERS.length, 5,
         function(row) { return String(row[0]) + "|" + String(row[12] || ""); },
         13, cutoff, deadline);
-      if (entries.deleted) bumpCacheVersion("entries");
+      if (entries.deleted) { bumpCacheVersion("entries"); bumpCacheVersion("entriesEdit"); }
     }
 
     var msg = "archiveOldData (cutoff " + cutoff + "): Cases archived " + cases.archived + ", removed " + cases.deleted +
