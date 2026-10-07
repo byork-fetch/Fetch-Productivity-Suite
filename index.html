@@ -375,7 +375,8 @@ textarea{resize:vertical;min-height:80px;}
       <div class="export-row" style="justify-content:center">
         <button class="btn btn-outline btn-sm" onclick="toggleExportFilters()">🔧 Export Filters <span id="exportChevron">▼</span></button>
         <button class="btn btn-outline btn-sm" onclick="quickViewData()">👁 Quick View</button>
-        <button class="btn btn-primary btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
+        <button class="btn btn-primary btn-sm" onclick="exportCSV()" title="Time entries for the selected range and export filters">⬇ Export Time</button>
+        <button class="btn btn-primary btn-sm" onclick="exportCasesCSV()" title="Cases for the selected range and export filters">⬇ Export Cases</button>
       </div>
       <div class="export-filters" id="exportFilters">
         <div class="export-filters-grid">
@@ -540,7 +541,9 @@ function apiGet(action, params) {
 // spinner up forever. Give up after 60s, and turn a non-JSON reply (e.g. a
 // Google "authorization required" page) into a readable error.
 function fetchJsonWithTimeout(url, opts, ms){
-  ms = ms || 60000;
+  // Apps Script allows a request up to 6 minutes, and a cold read of a big
+  // sheet can take well over a minute. Wait that long before giving up.
+  ms = ms || 330000;
   var ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
   var timer = ctrl ? setTimeout(function(){ ctrl.abort(); }, ms) : null;
   var o = opts || {}; if (ctrl) o.signal = ctrl.signal;
@@ -969,7 +972,10 @@ function fetchDashboardData() {
   renderPeriodControls();
   document.getElementById("periodDesc").textContent = "Loading data for " + periodLabel() + "…";
   setDashboardLoadingVisual(true);
+  var _t0=Date.now();
   apiGet("getDashboardData",{start:b.start,end:b.end,priorStart:pb.start,priorEnd:pb.end}).then(function(result){
+    console.log("[Dashboard] getDashboardData took "+((Date.now()-_t0)/1000).toFixed(1)+"s", result&&result.error?("ERROR: "+result.error):("entries="+((result&&result.entries)||[]).length+", cases="+((result&&result.cases)||[]).length));
+    if(result&&result.error){ throw new Error(result.error); }
     state.allRangeEntries=(result&&!result.error&&Array.isArray(result.entries))?result.entries:[];
     state.allRangeCases=(result&&!result.error&&Array.isArray(result.cases))?result.cases:[];
     state.allPriorRangeCases=(result&&!result.error&&Array.isArray(result.priorCases))?result.priorCases:[];
@@ -980,9 +986,11 @@ function fetchDashboardData() {
     updateAnalystFilterOptions();
     applyAnalystFilter();
     applyCaseFilter();
-  }).catch(function(){
+  }).catch(function(err){
+    console.error("[Dashboard] load failed:", err);
+    toast("error","Couldn't load dashboard data: "+(err&&err.message?err.message:err)+". Try 🔄 again.");
     state.allRangeEntries=[]; state.allRangeCases=[]; state.allPriorRangeCases=[];
-    document.getElementById("periodDesc").textContent = "Showing data for " + periodLabel();
+    document.getElementById("periodDesc").textContent = "Couldn't load data for " + periodLabel() + ". Try 🔄 again.";
     state.periodLoading = false;
     renderPeriodControls();
     setDashboardLoadingVisual(false);
@@ -2071,6 +2079,19 @@ function getFilteredExportCases(){
     }
     return true;
   });
+}
+
+// Same filters as the time export (Analyst / Activity / Specific Date, plus
+// the selected team). An Activity like "Rules Review" narrows cases to the
+// matching platform (Kount); a non-case activity like "Meeting" has no cases.
+function exportCasesCSV(){
+  var cases=getFilteredExportCases();if(!cases.length){toast("error","No cases to export");return;}
+  cases=cases.slice().sort(function(a,b){return String(a.date).localeCompare(String(b.date))||String(a.solved_at||"").localeCompare(String(b.solved_at||""));});
+  var headers=["Date","Analyst","Platform","Case ID","Handle (seconds)","Handle Time","Timing Method","Solved At","Source"];
+  var rows=cases.map(function(c){var hs=(typeof c.handle_seconds==="number"&&c.handle_seconds>0)?c.handle_seconds:"";return[c.date,c.analyst,c.platform,c.case_id,hs,hs===""?"":fmtSeconds(hs),c.timing_method||"",c.solved_at||"",c.source||""];});
+  var csv=[headers].concat(rows).map(function(r){return r.map(function(v){v=String(v==null?"":v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(",");}).join("\n");
+  var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="cases_"+document.getElementById("teamStartDate").value+"_to_"+document.getElementById("teamEndDate").value+".csv";a.click();
+  toast("success","Exported "+cases.length+" cases");
 }
 
 function quickViewData(){
