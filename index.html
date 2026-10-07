@@ -183,6 +183,7 @@ textarea{resize:vertical;min-height:80px;}
 .date-input{padding:.4rem .7rem;border:1px solid var(--border);border-radius:.5rem;background:var(--card);color:var(--text);font-size:.83rem;}
 .spinner{width:2rem;height:2rem;border-radius:50%;border:3px solid var(--border);border-top-color:var(--primary);animation:spin .7s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
+.case-link{color:var(--primary,#7c3aed);text-decoration:underline;text-underline-offset:2px;}.case-link:hover{opacity:.8;}
 #refreshBtn.spinning .refresh-icon{display:inline-block;animation:spin .8s linear infinite;}
 #refreshBtn:disabled{opacity:.7;cursor:default;}
 .loading-center{display:flex;justify-content:center;padding:3rem;}
@@ -1279,6 +1280,28 @@ function getFilteredCaseLogRows(){
   return filtered;
 }
 
+// ============================================================
+// CASE LINKS — every Case ID / ticket / user ID opens its record.
+// IDs like "ABC-0" (several cases logged at once with no real IDs) stay
+// plain text since they don't point at a real record.
+// ============================================================
+var CASE_LINK_TEMPLATES = {
+  Kount:   "https://app.kount.com/case-management/case-queue/order/{ID}",
+  Zendesk: "https://shopfetch.zendesk.com/agent/tickets/{ID}",
+  RADAR:   "https://support-dashboard.fetchrewards.com/fraud/{ID}"
+};
+function caseUrl(platform, id) {
+  var t = CASE_LINK_TEMPLATES[platform];
+  id = String(id || "").trim();
+  if (!t || !id || /-\d+$/.test(id) && !/^\d+$/.test(id)) return "";
+  return t.replace("{ID}", encodeURIComponent(id));
+}
+function caseIdHtml(platform, id) {
+  var url = caseUrl(platform, id);
+  if (!url) return esc(id);
+  return '<a href="'+esc(url)+'" target="_blank" rel="noopener" class="case-link" title="Open in '+esc(platform)+'">'+esc(id)+'</a>';
+}
+
 function renderCaseLog() {
   var filtered = getFilteredCaseLogRows();
   var sorted=filtered.slice().sort(function(a,b){var f=state.caseSortField,dir=state.caseSortDir==="asc"?1:-1,av=a[f],bv=b[f];if(typeof av==="number"||typeof bv==="number")return((av||0)-(bv||0))*dir;return String(av||"").localeCompare(String(bv||""))*dir;});
@@ -1292,15 +1315,15 @@ function renderCaseLog() {
       var title = flag.dir==="high" ? (flag.times+"x the platform average — much slower than usual") : (flag.times+"x the platform average — much faster than usual");
       flagBadge = ' <span data-tooltip="'+esc(title)+'" style="display:inline-block;width:.5rem;height:.5rem;border-radius:50%;background:'+color+';margin-left:.4rem;vertical-align:middle"></span>';
     }
-    return '<tr><td>'+esc(c.date)+'</td><td>'+esc(c.analyst)+'</td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+esc(c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+flagBadge+'</td></tr>';
+    return '<tr><td>'+esc(c.date)+'</td><td>'+esc(c.analyst)+'</td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+caseIdHtml(c.platform, c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+flagBadge+'</td></tr>';
   }).join("");
 }
 
 function exportCaseLogCSV(){
   var filtered = getFilteredCaseLogRows();
   if (!filtered.length) { toast("error","No cases to export"); return; }
-  var headers=["Date","Analyst","Platform","Case ID","Source","Handle Time (seconds)","Handle Time"];
-  var rows=filtered.map(function(c){return [c.date,c.analyst,c.platform,c.case_id,c.source||"",c.handle_seconds!=null?c.handle_seconds:"",fmtHandleTime(c)];});
+  var headers=["Date","Analyst","Platform","Case ID","Link","Source","Handle Time (seconds)","Handle Time"];
+  var rows=filtered.map(function(c){return [c.date,c.analyst,c.platform,c.case_id,caseUrl(c.platform,c.case_id),c.source||"",c.handle_seconds!=null?c.handle_seconds:"",fmtHandleTime(c)];});
   var csv=[headers,...rows].map(function(r){return r.map(function(v){v=String(v||"");return v.includes(",")||v.includes('"')?'"'+v.replace(/"/g,'""')+'"':v;}).join(",");}).join("\n");
   var b = getPeriodBounds();
   var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="case_log_"+b.start+"_to_"+b.end+".csv";a.click();
@@ -1779,6 +1802,7 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
     flags.push({
       analyst: c.analyst,
       message: "RADAR case "+c.case_id+" took "+fmtSeconds(c.handle_seconds)+" ("+c.date+")",
+      caseLink: caseUrl("RADAR", c.case_id),
       key: "radarslow:"+c.analyst+":"+c.date+":"+c.case_id
     });
   });
@@ -1836,7 +1860,7 @@ function renderAttentionBanner(assignments, entries, cases) {
         return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.5rem .75rem;background:var(--muted-bg);border-radius:.5rem">'
           + '<label style="display:flex;align-items:center;gap:.6rem;flex:1;min-width:200px;cursor:pointer">'
           + '<input type="checkbox" class="attention-flag-checkbox"'+checked+' onchange="toggleAttentionFlagSelection(\''+esc(f.key)+'\', this.checked)">'
-          + '<span style="font-size:.85rem"><strong>'+esc(f.analyst)+'</strong> — '+esc(f.message)+'</span>'
+          + '<span style="font-size:.85rem"><strong>'+esc(f.analyst)+'</strong> — '+esc(f.message)+(f.caseLink?' <a href="'+esc(f.caseLink)+'" target="_blank" rel="noopener" class="case-link">open ↗</a>':'')+'</span>'
           + '</label>'
           + '<span style="display:flex;gap:.4rem;flex-shrink:0">'
           + '<button class="btn btn-outline btn-sm" onclick="viewAnalystDetail(\''+esc(f.analyst)+'\')">View</button>'
@@ -2048,7 +2072,7 @@ function renderQuickViewTable() {
     head = '<tr><th>Date</th><th>Analyst</th><th>Platform</th><th>Case ID</th><th>Source</th><th style="text-align:right">Handle Time</th></tr>';
     body = cases.length===0 ? '<tr><td colspan="6" class="empty">No cases match filters</td></tr>' : cases.map(function(c){
       var pc = c.platform==='Kount'?'badge-kount':c.platform==='Zendesk'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':'';
-      return '<tr><td>'+esc(c.date)+'</td><td><span class="badge">'+esc(c.analyst)+'</span></td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+esc(c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+'</td></tr>';
+      return '<tr><td>'+esc(c.date)+'</td><td><span class="badge">'+esc(c.analyst)+'</span></td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+caseIdHtml(c.platform, c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+'</td></tr>';
     }).join("");
     document.getElementById("quickViewMeta").textContent=(state.quickViewAnalyst?state.quickViewAnalyst+" · ":"")+cases.length+" case"+(cases.length===1?"":"s");
   } else {
@@ -2114,8 +2138,8 @@ function getFilteredExportCases(){
 function exportCasesCSV(){
   var cases=getFilteredExportCases();if(!cases.length){toast("error","No cases to export");return;}
   cases=cases.slice().sort(function(a,b){return String(a.date).localeCompare(String(b.date))||String(a.solved_at||"").localeCompare(String(b.solved_at||""));});
-  var headers=["Date","Analyst","Platform","Case ID","Handle (seconds)","Handle Time","Timing Method","Solved At","Source"];
-  var rows=cases.map(function(c){var hs=(typeof c.handle_seconds==="number"&&c.handle_seconds>0)?c.handle_seconds:"";return[c.date,c.analyst,c.platform,c.case_id,hs,hs===""?"":fmtSeconds(hs),c.timing_method||"",c.solved_at||"",c.source||""];});
+  var headers=["Date","Analyst","Platform","Case ID","Link","Handle (seconds)","Handle Time","Timing Method","Solved At","Source"];
+  var rows=cases.map(function(c){var hs=(typeof c.handle_seconds==="number"&&c.handle_seconds>0)?c.handle_seconds:"";return[c.date,c.analyst,c.platform,c.case_id,caseUrl(c.platform,c.case_id),hs,hs===""?"":fmtSeconds(hs),c.timing_method||"",c.solved_at||"",c.source||""];});
   var csv=[headers].concat(rows).map(function(r){return r.map(function(v){v=String(v==null?"":v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(",");}).join("\n");
   var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="cases_"+document.getElementById("teamStartDate").value+"_to_"+document.getElementById("teamEndDate").value+".csv";a.click();
   toast("success","Exported "+cases.length+" cases");
