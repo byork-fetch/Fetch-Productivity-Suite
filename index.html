@@ -1494,7 +1494,7 @@ function saveEdit(){
 var ADD_ENTRY_ACTIVITIES = [
   "Dispute Review","Rules Review","RADAR","CF Audit","Lattice","Udemy","Medallia",
   "AI/Innovation","Break (15 min)","Catching Up","Equipment Issue","Inclusion Calendar Programs",
-  "Lunch","Meeting","Senior Sync Prep","SFA Escalations","Training","Wellness"
+  "Lunch","Meeting","Senior Sync Prep","SFA Escalations","SFA Questions","Training","Wellness"
 ];
 var ADD_ENTRY_MAX_HOURS = 12;
 var ADD_ENTRY_ANALYST_DAYS_BACK = 7; // supervisors aren't limited
@@ -1691,7 +1691,7 @@ function loadTeamData(){
 // Training, Udemy, Lattice, Wellness etc. all inflated utilization.
 // Matching is case-insensitive "contains", so "Dispute Review" and
 // "Dispute Reviews", or a task with a 🧹Sweeping suffix, still match.
-var UTILIZED_TASKS=["SFA Escalations","Dispute Review","Rules Review","RADAR","CF Audit","Training","AI/Innovation"];
+var UTILIZED_TASKS=["SFA Escalations","SFA Questions","Dispute Review","Rules Review","RADAR","CF Audit","Training","AI/Innovation"];
 // Lunch is off the clock, so it's left out of the denominator entirely.
 var OFF_CLOCK_TASKS=["Lunch"];
 function _taskMatches(task,list){var t=String(task||"").toLowerCase();return list.some(function(s){return t.includes(s.toLowerCase());});}
