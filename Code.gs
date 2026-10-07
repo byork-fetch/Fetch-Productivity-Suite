@@ -792,6 +792,46 @@ function _readCasesLiveAndCache(version) {
   return _casesMemory;
 }
 
+// ============================================================
+// CASE READ CACHE (v4.3)
+// Case reads used to be cached by the "cases" version, which bumps on EVERY
+// case any analyst saves, so with the team saving cases all day the cache
+// was almost always stale and nearly every dashboard load went to the sheet.
+// Case ranges are now cached for 60 seconds regardless of new saves
+// (dashboard numbers can lag a new case by up to a minute; the 🔄 button
+// bypasses this). Results bigger than one 100KB cache entry are split into
+// chunks. The nightly archive run clears it via the "casesArchive" version.
+// ============================================================
+var CASE_RANGE_TTL = 60;
+var CHUNK_SIZE = 90000, CHUNK_MAX = 40;
+
+function _chunkedCacheGet(key) {
+  if (_bypassCache) return null;
+  try {
+    var cache = CacheService.getScriptCache();
+    var meta = cache.get(key + ":meta");
+    if (!meta) return null;
+    var n = parseInt(meta, 10), keys = [];
+    for (var i = 0; i < n; i++) keys.push(key + ":c" + i);
+    var got = cache.getAll(keys), parts = [];
+    for (var j = 0; j < keys.length; j++) { if (got[keys[j]] == null) return null; parts.push(got[keys[j]]); }
+    return JSON.parse(parts.join(""));
+  } catch (e) { return null; }
+}
+
+function _chunkedCachePut(key, value, ttl) {
+  try {
+    var json = JSON.stringify(value);
+    var n = Math.ceil(json.length / CHUNK_SIZE);
+    if (n === 0 || n > CHUNK_MAX) return;
+    var obj = {};
+    for (var i = 0; i < n; i++) obj[key + ":c" + i] = json.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    var cache = CacheService.getScriptCache();
+    cache.putAll(obj, ttl);
+    cache.put(key + ":meta", String(n), ttl);
+  } catch (e) { /* too big or cache unavailable: fine, just not cached */ }
+}
+
 // RANGE READS (v4.3) — the Cases tab is ~50k rows and grows by the whole
 // team's case count every day, while nearly every request only needs a few
 // days or weeks of it. Instead of reading all 10 columns of every row, we
@@ -805,16 +845,21 @@ var _caseDatesMemo = null, _caseDatesMemoVersion = null;
 function _getCaseDateColumn() {
   var version = getCacheVersion("cases");
   if (_caseDatesMemo && _caseDatesMemoVersion === version) return _caseDatesMemo;
+  var tA = Date.now();
   var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_CASES);
+  var tB = Date.now();
+  var lastRow = sheet ? sheet.getLastRow() : 0;
+  var tC = Date.now();
   var dates = [];
-  if (sheet && sheet.getLastRow() >= 2) {
+  if (sheet && lastRow >= 2) {
     var tz = Session.getScriptTimeZone();
-    var col = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    var col = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
     for (var i = 0; i < col.length; i++) {
       var v = col[i][0];
       dates.push((v instanceof Date) ? Utilities.formatDate(v, tz, "yyyy-MM-dd") : String(v || "").substring(0, 10));
     }
   }
+  console.log("Cases read timing: open " + (tB - tA) + "ms, getLastRow " + (tC - tB) + "ms, date column " + (Date.now() - tC) + "ms, rows " + dates.length);
   _caseDatesMemo = { sheet: sheet, dates: dates };
   _caseDatesMemoVersion = version;
   return _caseDatesMemo;
@@ -842,9 +887,12 @@ function _readLiveCasesInRange(startDate, endDate) {
 
 function _readAllCases(startDate, endDate) {
   try {
-    var results = cachedCall("casesRange:" + startDate + ":" + endDate, CASES_CACHE_TTL, function() {
-      return _readLiveCasesInRange(startDate, endDate);
-    }, ["cases"]);
+    var ckey = "casesRange2:" + startDate + ":" + endDate + ":a" + getCacheVersion("casesArchive");
+    var results = _chunkedCacheGet(ckey);
+    if (!results) {
+      results = _readLiveCasesInRange(startDate, endDate);
+      _chunkedCachePut(ckey, results, CASE_RANGE_TTL);
+    }
     if (!Array.isArray(results)) return [];
     var seen = {};
     for (var i = 0; i < results.length; i++) seen[results[i].date + "|" + results[i].platform + "|" + results[i].case_id] = true;
@@ -1780,9 +1828,16 @@ function handleCaseRow(payload) {
       sheet.getRange(1,1,1,10).setFontWeight("bold"); sheet.setFrozenRows(1);
     }
     var dedupeKey = [payload.date, payload.platform, payload.case_id].join("|");
-    if (sheet.getLastRow() > 1) {
-      var keys = sheet.getRange(2,9,sheet.getLastRow()-1,1).getValues();
-      for (var k = 0; k < keys.length; k++) {
+    // Dedupe against the most recent rows only. Duplicates come from the
+    // extension retrying a case it already sent, which lands near the
+    // bottom; scanning all ~50k rows on every single case save was slow and
+    // kept the sheet busy for everyone else's reads.
+    var DEDUPE_WINDOW = 8000;
+    var lastRowNow = sheet.getLastRow();
+    if (lastRowNow > 1) {
+      var firstRow = Math.max(2, lastRowNow - DEDUPE_WINDOW + 1);
+      var keys = sheet.getRange(firstRow, 9, lastRowNow - firstRow + 1, 1).getValues();
+      for (var k = keys.length - 1; k >= 0; k--) {
         if (keys[k][0] === dedupeKey) return jsonResponse({ success:true, skipped:true, reason:"Duplicate case" });
       }
     }
@@ -2003,7 +2058,7 @@ function archiveOldData() {
       CASE_HEADERS.length, 0,
       function(row) { return String(row[8] || [row[0], row[2], row[3]].join("|")); },
       9, cutoff, deadline);
-    if (cases.deleted) bumpCacheVersion("cases");
+    if (cases.deleted) { bumpCacheVersion("cases"); bumpCacheVersion("casesArchive"); }
 
     // time_entries: numeric id (col A) plus sheet_row_id (col M).
     var entries = { archived: 0, deleted: 0, done: false };
