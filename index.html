@@ -974,7 +974,7 @@ function fetchDashboardData() {
   setDashboardLoadingVisual(true);
   var _t0=Date.now();
   apiGet("getDashboardData",{start:b.start,end:b.end,priorStart:pb.start,priorEnd:pb.end}).then(function(result){
-    console.log("[Dashboard] getDashboardData took "+((Date.now()-_t0)/1000).toFixed(1)+"s", result&&result.error?("ERROR: "+result.error):("entries="+((result&&result.entries)||[]).length+", cases="+((result&&result.cases)||[]).length));
+    console.log("[Dashboard] getDashboardData took "+((Date.now()-_t0)/1000).toFixed(1)+"s", result&&result.error?("ERROR: "+result.error):("entries="+((result&&result.entries)||[]).length+", cases="+((result&&result.cases)||[]).length), result&&result._timing?("server: "+JSON.stringify(result._timing)):"");
     if(result&&result.error){ throw new Error(result.error); }
     state.allRangeEntries=(result&&!result.error&&Array.isArray(result.entries))?result.entries:[];
     state.allRangeCases=(result&&!result.error&&Array.isArray(result.cases))?result.cases:[];
