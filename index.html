@@ -538,13 +538,17 @@ function apiGet(action, params) {
   // googleusercontent hand-off page (a Google-side hiccup, not our code).
   // Reads are safe to repeat, so retry once quietly before reporting it.
   var t0 = Date.now();
-  return fetchJsonWithTimeout(url).catch(function(err){
-    if (err && /HTTP 404/.test(err.message)) {
-      console.warn("[API] "+action+" got a Google 404 hand-off error, retrying once");
-      return new Promise(function(r){ setTimeout(r, 800); }).then(function(){ return fetchJsonWithTimeout(url); });
-    }
-    throw err;
-  }).then(function(json){
+  function attempt(n){
+    return fetchJsonWithTimeout(url).catch(function(err){
+      if (err && /HTTP 404/.test(err.message) && n < 3) {
+        var wait = [1000, 3000, 6000][n];
+        console.warn("[API] "+action+" got a Google 404 hand-off error, retry "+(n+1)+" of 3 in "+(wait/1000)+"s");
+        return new Promise(function(r){ setTimeout(r, wait); }).then(function(){ return attempt(n+1); });
+      }
+      throw err;
+    });
+  }
+  return attempt(0).then(function(json){
     var secs = (Date.now()-t0)/1000;
     if (secs > 5) console.log("[API] "+action+" took "+secs.toFixed(1)+"s");
     return json;
