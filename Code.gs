@@ -792,19 +792,65 @@ function _readCasesLiveAndCache(version) {
   return _casesMemory;
 }
 
+// RANGE READS (v4.3) — the Cases tab is ~50k rows and grows by the whole
+// team's case count every day, while nearly every request only needs a few
+// days or weeks of it. Instead of reading all 10 columns of every row, we
+// read ONLY column A (dates) — about a tenth of the cells — find the first
+// and last row inside the requested range, and read the full columns for
+// just that block. Rows arrive roughly in date order, so "This Week" is a
+// few thousand rows at the bottom instead of the whole sheet. Exact, not an
+// estimate: any out-of-order row (late extension sync) still falls inside
+// the block because the block spans the first through last matching row.
+var _caseDatesMemo = null, _caseDatesMemoVersion = null;
+function _getCaseDateColumn() {
+  var version = getCacheVersion("cases");
+  if (_caseDatesMemo && _caseDatesMemoVersion === version) return _caseDatesMemo;
+  var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_CASES);
+  var dates = [];
+  if (sheet && sheet.getLastRow() >= 2) {
+    var tz = Session.getScriptTimeZone();
+    var col = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    for (var i = 0; i < col.length; i++) {
+      var v = col[i][0];
+      dates.push((v instanceof Date) ? Utilities.formatDate(v, tz, "yyyy-MM-dd") : String(v || "").substring(0, 10));
+    }
+  }
+  _caseDatesMemo = { sheet: sheet, dates: dates };
+  _caseDatesMemoVersion = version;
+  return _caseDatesMemo;
+}
+
+function _readLiveCasesInRange(startDate, endDate) {
+  var col = _getCaseDateColumn();
+  var dates = col.dates, lo = -1, hi = -1;
+  for (var i = 0; i < dates.length; i++) {
+    var d = dates[i];
+    if (d && d >= startDate && d <= endDate) { if (lo === -1) lo = i; hi = i; }
+  }
+  if (lo === -1) return [];
+  var data = col.sheet.getRange(lo + 2, 1, hi - lo + 1, 10).getValues();
+  var tz = Session.getScriptTimeZone();
+  var results = [];
+  for (var r = 0; r < data.length; r++) {
+    var dateStr = dates[lo + r];
+    if (!dateStr || dateStr < startDate || dateStr > endDate) continue;
+    var row = data[r];
+    results.push({ date: dateStr, analyst: String(row[1]||""), platform: String(row[2]||""), case_id: String(row[3]||""), source: String(row[4]||""), handle_seconds: (typeof row[5]==="number"&&row[5]>0)?row[5]:null, solved_at: String(row[7]||""), timing_method: String(row[9]||"") }); // same as the old full read
+  }
+  return results;
+}
+
 function _readAllCases(startDate, endDate) {
   try {
-    var all = _getAllCasesRaw();
-    var results = [];
+    var results = cachedCall("casesRange:" + startDate + ":" + endDate, CASES_CACHE_TTL, function() {
+      return _readLiveCasesInRange(startDate, endDate);
+    }, ["cases"]);
+    if (!Array.isArray(results)) return [];
     var seen = {};
-    for (var i = 0; i < all.length; i++) {
-      var r = all[i];
-      if (r[0] < startDate || r[0] > endDate) continue;
-      seen[r[0] + "|" + r[2] + "|" + r[3]] = true;
-      results.push({ date: r[0], analyst: r[1], platform: r[2], case_id: r[3], source: r[4], handle_seconds: r[5], solved_at: r[6], timing_method: r[7] });
-    }
+    for (var i = 0; i < results.length; i++) seen[results[i].date + "|" + results[i].platform + "|" + results[i].case_id] = true;
     // Range reaches past the archive cutoff: merge in archived cases too.
     if (_rangeNeedsArchive(startDate)) {
+      results = results.slice();
       var arch = _getArchivedCasesRaw();
       for (var a = 0; a < arch.length; a++) {
         var x = arch[a];
@@ -861,7 +907,7 @@ function getDashboardData(startDate, endDate, priorStart, priorEnd) {
     var t2 = Date.now();
     var priorCases = _readAllCases(priorStart, priorEnd);
     var t3 = Date.now();
-    var timing = { entriesMs: t1 - t0, casesMs: t2 - t1, priorCasesMs: t3 - t2, totalCaseRows: (_casesMemory || []).length };
+    var timing = { entriesMs: t1 - t0, casesMs: t2 - t1, priorCasesMs: t3 - t2, totalCaseRows: (_caseDatesMemo ? _caseDatesMemo.dates.length : null) };
     console.log("getDashboardData timing " + JSON.stringify(timing));
     return {
       entries: entries,
