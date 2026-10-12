@@ -1,6 +1,6 @@
 // ============================================================
 // PI PRODUCTIVITY SUITE — Google Apps Script Backend
-// Code.gs — v4.3 (GitHub Pages / fetch() compatible)
+// Code.gs — v4.3.5 (GitHub Pages / fetch() compatible)
 // ============================================================
 // All data reads now go through doGet with ?action=... params.
 // The dashboard is hosted on GitHub Pages and calls this
@@ -31,6 +31,98 @@ function isPrivileged(role) {
 
 function isAdminRole(role) {
   return (role || "").toLowerCase().trim() === "admin";
+}
+
+// ============================================================
+// REPORTABLE ROSTER (v4.3.5)
+// Only people whose team_assignments role is PI Analyst or Senior PI
+// Analyst are reported on: the weekly digest, Needs Attention flags, and
+// every supervisor/admin view of the dashboard. Anyone else (Audit
+// Analyst, QA Coordinator, a typo, or someone not in team_assignments at
+// all) is left out of those, but can still sign in and see their own
+// numbers. Their rows are never deleted: move them back into an analyst
+// role and they reappear, history included.
+//
+// A blank role counts as PI Analyst, the same default the dashboard's
+// getEffectiveRole() has always used. Matching ignores case and extra
+// spaces. Admin/supervisor accounts (users tab) keep their existing
+// treatment: individually viewable by supervisors, never counted in team
+// totals (that exclusion lives in the digest and dashboard as before).
+// ============================================================
+var REPORTABLE_ROLES = ["pi analyst", "senior pi analyst"];
+function _normRoleName(s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); }
+
+var _rosterMemo = null;
+// { reportable: {normName:true}, privileged: {normName:true} }
+function _getRoster() {
+  if (_rosterMemo) return _rosterMemo;
+  var built = cachedCall("roster_v435", 300, function() {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var reportable = {}, privileged = {};
+    var ta = ss.getSheetByName(SHEET_TEAM_ASSIGN);
+    if (ta && ta.getLastRow() > 1) {
+      ta.getRange(2, 1, ta.getLastRow() - 1, 4).getValues().forEach(function(r){
+        if (!r[0]) return;
+        var role = _normRoleName(r[3]) || "pi analyst";
+        if (REPORTABLE_ROLES.indexOf(role) !== -1) reportable[_normRoleName(r[0])] = true;
+      });
+    }
+    var us = ss.getSheetByName(SHEET_USERS);
+    if (us && us.getLastRow() > 1) {
+      us.getRange(2, 1, us.getLastRow() - 1, 3).getValues().forEach(function(r){
+        if (isPrivileged(r[1]) && r[2]) privileged[_normRoleName(r[2])] = true;
+      });
+    }
+    return { reportable: reportable, privileged: privileged };
+  }, ["misc"]);
+  _rosterMemo = built || { reportable: {}, privileged: {} };
+  return _rosterMemo;
+}
+// Counted in team-wide numbers (digest totals, flags): an analyst-role
+// person who isn't an admin/supervisor account.
+function _isReportable(name) {
+  var r = _getRoster(), k = _normRoleName(name);
+  return !!r.reportable[k] && !r.privileged[k];
+}
+// Shown at all in a supervisor/admin view: analyst roles, plus admin/
+// supervisor accounts (which the dashboard keeps out of totals itself).
+function _isVisibleToSupervisors(name) {
+  var r = _getRoster(), k = _normRoleName(name);
+  return !!r.reportable[k] || !!r.privileged[k];
+}
+
+// ============================================================
+// DUPLICATE-AWARE READS (v4.3.5)
+// Two extension saves that reach the sheet at the same moment could both
+// pass the "already here?" check and both get written, leaving exact
+// copies (same analyst, same case, same timestamp). Writes are now locked
+// (see doPost/handleCaseRow) so new copies can't happen, and every read
+// below skips exact copies so existing ones stop inflating counts and AHT
+// even before cleanupDuplicates() is run. Only rows identical in every
+// field that matters collapse: a user worked again at a different time,
+// or two different people's entries, always count separately.
+// ============================================================
+function _dedupeCaseRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  var seen = {}, out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var c = rows[i];
+    var k = [c.date, _normRoleName(c.analyst), c.platform, c.case_id, c.solved_at, c.handle_seconds == null ? "" : c.handle_seconds].join("|");
+    if (seen[k]) continue;
+    seen[k] = true; out.push(c);
+  }
+  return out;
+}
+function _dedupeEntryRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  var seen = {}, out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var e = rows[i];
+    var k = [_normRoleName(e.analyst), e.task, e.date, e.start_time || "", e.end_time || "", e.duration].join("|");
+    if (seen[k]) continue;
+    seen[k] = true; out.push(e);
+  }
+  return out;
 }
 
 // ============================================================
@@ -243,7 +335,10 @@ function signIn(idToken) {
 
 // Analysts only ever get their own rows back.
 function _scopeRows(rows) {
-  if (!_caller || _caller.privileged || !Array.isArray(rows)) return rows;
+  if (!_caller || !Array.isArray(rows)) return rows;
+  // v4.3.5: supervisors/admins see analyst-role people (and admin accounts)
+  // only; everyone else's rows stay out of their views.
+  if (_caller.privileged) return rows.filter(function(r){ return r && _isVisibleToSupervisors(r.analyst); });
   var me = _caller.displayName;
   return rows.filter(function(r){ return r && r.analyst === me; });
 }
@@ -256,7 +351,7 @@ function doGet(e) {
 
   // Ping check (used by extension)
   if (params.ping) {
-    return jsonResponse({ ok: true, version: "4.3-server", serverTs: new Date().toISOString() });
+    return jsonResponse({ ok: true, version: "4.3.5-server", serverTs: new Date().toISOString() });
   }
 
   // Data requests from the GitHub Pages dashboard
@@ -317,7 +412,7 @@ function doGet(e) {
         return jsonResponse(getTeamData(params.start, params.end, _caller.email));
       }
       if (action === "getAssignments") {
-        return jsonResponse(_caller.privileged ? getAssignmentsList() : []);
+        return jsonResponse(_caller.privileged ? getAssignmentsList().filter(function(a){ return _isVisibleToSupervisors(a.analyst_name); }) : []);
       }
       if (action === "getAllUsers") {
         return jsonResponse(getAllUsers(_caller.email));
@@ -449,6 +544,7 @@ function getTimeEntries(startDate, endDate) {
       }
       return results;
     })();
+    fresh = _dedupeEntryRows(fresh); // v4.3.5: exact copies count once
     _chunkedCachePut(tkey, fresh, 60);
     return fresh;
   } catch(e) { return { error: e.toString() }; }
@@ -650,13 +746,20 @@ function getTeamData(startDate, endDate, callerEmail) {
   var full = _getTeamDataFull(startDate, endDate);
   if (!full || full.error) return full;
   var c = (_caller && _caller.email === String(callerEmail || "").toLowerCase()) ? _caller : (callerEmail ? _getCallerRecord(String(callerEmail).toLowerCase()) : null);
-  if (c && c.privileged) return full;
+  if (c && c.privileged) {
+    // v4.3.5: supervisors/admins only see analyst-role people (+ admin accounts).
+    return {
+      assignments: (full.assignments || []).filter(function(a){ return _isVisibleToSupervisors(a.analyst_name); }),
+      entries: (full.entries || []).filter(function(e){ return _isVisibleToSupervisors(e.analyst); }),
+      cases: (full.cases || []).filter(function(x){ return _isVisibleToSupervisors(x.analyst); })
+    };
+  }
 
   var myName = c ? c.displayName : "";
   var mine = (full.assignments || []).filter(function(a){ return a.analyst_name === myName; });
   var teamKey = mine.length ? (mine[0].team_name || mine[0].supervisor_email) : null;
   var teammateRoles = teamKey ? (full.assignments || [])
-    .filter(function(a){ return (a.team_name || a.supervisor_email) === teamKey; })
+    .filter(function(a){ return (a.team_name || a.supervisor_email) === teamKey && (a.analyst_name === myName || _isVisibleToSupervisors(a.analyst_name)); })
     .map(function(a){ return { team_name: a.team_name, supervisor_email: a.supervisor_email, role: a.role }; }) : [];
   return {
     assignments: mine,
@@ -946,7 +1049,7 @@ function _readAllCases(startDate, endDate) {
       // Keep oldest-first order, same as a live-only read.
       results.sort(function(a, b){ return a.date.localeCompare(b.date) || String(a.solved_at).localeCompare(String(b.solved_at)); });
     }
-    return results;
+    return _dedupeCaseRows(results); // v4.3.5: exact copies count once
   } catch(e) { return []; }
 }
 
@@ -1363,7 +1466,7 @@ function _digestComputeOpenAttentionFlagCount() {
     var privileged = _digestGetPrivilegedNames();
     var validNames = {};
     taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 1).getValues().forEach(function(r){
-      if (r[0] && !privileged[_digestNormName(r[0])]) validNames[r[0].toString()] = true;
+      if (r[0] && !privileged[_digestNormName(r[0])] && _isReportable(r[0])) validNames[r[0].toString()] = true;
     });
 
     var end = new Date(), start = new Date(end.getTime() - 42*86400000);
@@ -1441,7 +1544,7 @@ function getCaseTrends(weeksBack, analystFilter) {
   try {
     weeksBack = parseInt(weeksBack, 10) || 12;
     analystFilter = analystFilter || "all";
-    return cachedCall("caseTrends:" + weeksBack + ":" + analystFilter, 300, function() {
+    return cachedCall("caseTrends435:" + weeksBack + ":" + analystFilter, 300, function() {
       var now = new Date();
       var thisWeekStart = _digestGetWeekStart(now);
       var weeks = [];
@@ -1464,7 +1567,7 @@ function getCaseTrends(weeksBack, analystFilter) {
             if (isPrivileged(r[1])) privileged[String(r[2]||"")] = true;
           });
         }
-        cases = cases.filter(function(c){ return !privileged[c.analyst]; });
+        cases = cases.filter(function(c){ return !privileged[c.analyst] && _isReportable(c.analyst); });
       }
 
       return weeks.map(function(w){
@@ -1486,7 +1589,7 @@ function getCaseTrends(weeksBack, analystFilter) {
 // most recent row here lines up with the digest's own (now always fully
 // complete) reporting week instead of whatever week the script happens to
 // be running in.
-function _digestGetWeeklyStats(weeksBack, asOfDate) {
+function _digestGetWeeklyStats(weeksBack, asOfDate, keepCase) {
   var now = asOfDate || new Date();
   var thisWeekStart = _digestGetWeekStart(now);
   var weeks = [];
@@ -1496,6 +1599,7 @@ function _digestGetWeeklyStats(weeksBack, asOfDate) {
     if (we > now) we = now; // cap the current week's end at "now" rather than querying into the future
     var wsStr = _digestFormatDate(ws), weStr = _digestFormatDate(we);
     var cases = _readAllCases(wsStr, weStr);
+    if (keepCase) cases = cases.filter(keepCase); // v4.3.5: digest passes the reportable-roster filter
     var ahtSecs = cases.filter(function(c){ return typeof c.handle_seconds==="number" && c.handle_seconds>0; }).map(function(c){ return c.handle_seconds; });
     var avgAhtMin = ahtSecs.length ? Math.round(ahtSecs.reduce(function(a,b){return a+b;},0)/ahtSecs.length/60*10)/10 : null;
     weeks.push({ start: wsStr, end: weStr, count: cases.length, avgAhtMin: avgAhtMin });
@@ -1589,7 +1693,7 @@ function _digestComputePlatformTrend(weekStart, privileged) {
   var priorEnd = new Date(weekStart.getTime() - 86400000);
   var priorStart = new Date(priorEnd.getTime() - 6*86400000);
   var priorCases = _readAllCases(_digestFormatDate(priorStart), _digestFormatDate(priorEnd))
-    .filter(function(c){ return !privileged[_digestNormName(c.analyst)]; });
+    .filter(function(c){ return !privileged[_digestNormName(c.analyst)] && _isReportable(c.analyst); });
   var byPlatform = { Kount: [], Zendesk: [], RADAR: [] };
   priorCases.forEach(function(c){
     if (byPlatform[c.platform] && typeof c.handle_seconds === "number" && c.handle_seconds > 0) byPlatform[c.platform].push(c.handle_seconds);
@@ -1633,7 +1737,8 @@ function sendWeeklyDigest() {
     var weekStartStr = _digestFormatDate(weekStart), weekEndStr = _digestFormatDate(weekEnd);
 
     var privileged = _digestGetPrivilegedNames();
-    var cases = _readAllCases(weekStartStr, weekEndStr).filter(function(c){ return !privileged[_digestNormName(c.analyst)]; });
+    // v4.3.5: only PI Analyst / Senior PI Analyst roles are reported on.
+    var cases = _readAllCases(weekStartStr, weekEndStr).filter(function(c){ return !privileged[_digestNormName(c.analyst)] && _isReportable(c.analyst); });
     var byPlatform = { Kount:{count:0,ahtSecs:[]}, Zendesk:{count:0,ahtSecs:[]}, RADAR:{count:0,ahtSecs:[]} };
     var byAnalyst = {};
     cases.forEach(function(c){
@@ -1697,7 +1802,7 @@ function sendWeeklyDigest() {
     // whatever week the script happens to be running in (now Monday of
     // the NEXT week). The most recent row is therefore always the same
     // fully-complete week the rest of this email reports on.
-    var weeklyStats = _digestGetWeeklyStats(4, weekEnd);
+    var weeklyStats = _digestGetWeeklyStats(4, weekEnd, function(c){ return !privileged[_digestNormName(c.analyst)] && _isReportable(c.analyst); });
     var trendRows = weeklyStats.map(function(w, idx){
       var deltaStr = "";
       var isPartialCurrent = (idx === weeklyStats.length - 1) && (weekEndStr !== _digestFormatDate(new Date(weekStart.getTime()+6*86400000)));
@@ -1717,7 +1822,7 @@ function sendWeeklyDigest() {
     // Idle Time — ported from the dashboard's client-side idle-gap logic so
     // the digest can flag it without anyone opening the dashboard first.
     var weekEntriesRaw = getTimeEntries(weekStartStr, weekEndStr);
-    var weekEntries = (Array.isArray(weekEntriesRaw) ? weekEntriesRaw : []).filter(function(e){ return !privileged[_digestNormName(e.analyst)]; });
+    var weekEntries = (Array.isArray(weekEntriesRaw) ? weekEntriesRaw : []).filter(function(e){ return !privileged[_digestNormName(e.analyst)] && _isReportable(e.analyst); });
     var idleSummary = _digestSummarizeIdleGaps(weekEntries);
     var idleSection = "";
     if (idleSummary.gapCount > 0) {
@@ -1818,6 +1923,13 @@ function doPost(e) {
     for (var i = 0; i < required.length; i++) {
       if (!payload[required[i]]) return jsonResponse({ error: "Missing field: " + required[i] });
     }
+    // v4.3.5 WRITE LOCK: without it, two saves arriving together could
+    // both pass the duplicate check below and both be written (exact
+    // copies), or two different people's entries could get the same id.
+    // Busy → error, and the extension's queue retries it shortly.
+    var teLock = LockService.getScriptLock();
+    if (!teLock.tryLock(20000)) return jsonResponse({ error: "Busy, please retry" });
+    try {
     var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
     var sheet = ss.getSheetByName(SHEET_TIME_ENTRIES);
     var maxId = 0;
@@ -1838,8 +1950,10 @@ function doPost(e) {
       extRow.push("manual");
     }
     sheet.appendRow(extRow);
+    SpreadsheetApp.flush(); // make the row visible to the next locked writer
     bumpCacheVersion("entries");
     return jsonResponse({ success: true, id: maxId });
+    } finally { try { teLock.releaseLock(); } catch(le) {} }
   } catch(err) { return jsonResponse({ error: err.toString() }); }
 }
 
@@ -1849,6 +1963,11 @@ function handleCaseRow(payload) {
     for (var i = 0; i < required.length; i++) {
       if (!payload[required[i]]) return jsonResponse({ error: "Missing field: " + required[i] });
     }
+    // v4.3.5 WRITE LOCK (see doPost): the dedupe check and the append
+    // below now happen as one step, so a case can't be written twice.
+    var caseLock = LockService.getScriptLock();
+    if (!caseLock.tryLock(20000)) return jsonResponse({ error: "Busy, please retry" });
+    try {
     var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
     var sheet = getOrCreateSheet(ss, SHEET_CASES);
     if (sheet.getLastRow() === 0) {
@@ -1879,8 +1998,10 @@ function handleCaseRow(payload) {
     var hs = (payload.handle_seconds===null||payload.handle_seconds===undefined)?'':payload.handle_seconds;
     var hm = hs===''?'':Math.round((hs/60)*100)/100;
     sheet.appendRow([payload.date||'', payload.analyst||'', payload.platform||'', payload.case_id||'', payload.source||'', hs, hm, payload.solved_at||'', dedupeKey, payload.timing_method||'']);
+    SpreadsheetApp.flush();
     bumpCacheVersion("cases");
     return jsonResponse({ success: true });
+    } finally { try { caseLock.releaseLock(); } catch(le) {} }
   } catch(err) { return jsonResponse({ error: err.toString() }); }
 }
 
@@ -2115,4 +2236,181 @@ function archiveOldData() {
   } finally {
     lock.releaseLock();
   }
+}
+// ============================================================
+// ONE-TIME DUPLICATE CLEANUP (v4.3.5)
+// Run from the Apps Script editor (select the function, click Run).
+//
+//   1. previewDuplicateCleanup()  — changes NOTHING. Writes every row it
+//      would remove, and every id it would renumber, to a
+//      "dup_cleanup_preview" tab so you can check it first.
+//   2. applyDuplicateCleanup()    — does it. Each removed row is copied to
+//      a "dup_cleanup_removed" tab first, so nothing is lost. Safe to run
+//      again: it recomputes the plan from scratch each time and stops
+//      cleanly before Apps Script's time limit (just run it again).
+//
+// What counts as a duplicate (keep the first, remove the rest):
+//   Cases:        same date, analyst, platform, case id, solved-at time
+//                 and handle time — an exact copy of the same save.
+//   Time entries: same analyst, activity, date, start, end and duration —
+//                 an exact copy; or the same analyst/activity/date with
+//                 start and duration within 2 seconds (two copies of the
+//                 extension logging the same work at once).
+// Never removed: two DIFFERENT people's entries that happen to share an id
+// number. Those are both real; the later one just gets a new id.
+// Covers the live sheet and, if it exists, the archive spreadsheet.
+// ============================================================
+var DUP_CLEANUP_BUDGET_MS = 4.5 * 60 * 1000;
+
+function _dupCellStr(v, tz) {
+  if (v instanceof Date) return v.toISOString();
+  return String(v === null || v === undefined ? "" : v).trim();
+}
+
+// Returns { removeRows:[sheetRow,…] (ascending), renumber:[{row, oldId, newId}], details:[…] }
+function _dupPlanForSheet(sheet, kind) {
+  var plan = { removeRows: [], renumber: [], details: [] };
+  if (!sheet || sheet.getLastRow() < 2) return plan;
+  var tz = Session.getScriptTimeZone();
+  var nCols = kind === "case" ? 10 : Math.min(14, sheet.getMaxColumns());
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, nCols).getValues();
+  var seen = {}, nearby = {};
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    if (!r[0] && !r[1]) continue;
+    var key, tDate;
+    if (kind === "case") {
+      var cDate = (r[0] instanceof Date) ? _ymd(r[0], tz) : _dupCellStr(r[0]);
+      key = [cDate, _normRoleName(r[1]), _dupCellStr(r[2]), _dupCellStr(r[3]), _dupCellStr(r[7]), _dupCellStr(r[5])].join("|");
+    } else {
+      tDate = (r[5] instanceof Date) ? _ymd(r[5], tz) : _dupCellStr(r[5]).substring(0, 10);
+      key = [_normRoleName(r[1]), _dupCellStr(r[3]), tDate, _dupCellStr(r[7]), _dupCellStr(r[8]), _dupCellStr(r[4])].join("|");
+    }
+    if (seen[key]) {
+      plan.removeRows.push(i + 2);
+      plan.details.push([sheet.getName(), i + 2, kind === "case" ? "Duplicate case" : "Duplicate time entry", "copy of row " + seen[key]].concat(r.slice(0, 10).map(function(v){ return _dupCellStr(v); })));
+      continue;
+    }
+    seen[key] = i + 2;
+    // Time entries only: two copies of the extension running at once (an
+    // old test install) logged the same work a millisecond apart. Same
+    // analyst, activity and date, start AND duration within 2 seconds of a
+    // kept entry = the same entry. Two real entries can't match that.
+    if (kind === "entry") {
+      var sMs = Date.parse(_dupCellStr(r[7])), dur = Number(r[4]);
+      if (!isNaN(sMs) && !isNaN(dur)) {
+        var gk = [_normRoleName(r[1]), _dupCellStr(r[3]), tDate].join("|");
+        var near = (nearby[gk] || []).filter(function(x){ return Math.abs(x.s - sMs) <= 2000 && Math.abs(x.d - dur) <= 2; })[0];
+        if (near) {
+          delete seen[key];
+          plan.removeRows.push(i + 2);
+          plan.details.push([sheet.getName(), i + 2, "Duplicate time entry", "same entry as row " + near.row + " (logged twice, under 2s apart)"].concat(r.slice(0, 10).map(function(v){ return _dupCellStr(v); })));
+          continue;
+        }
+        (nearby[gk] = nearby[gk] || []).push({ s: sMs, d: dur, row: i + 2 });
+      }
+    }
+  }
+  // Shared ids (time entries only): among rows that are KEPT, any id used
+  // more than once gets a fresh id on every row after the first.
+  if (kind === "entry") {
+    var removed = {}; plan.removeRows.forEach(function(n){ removed[n] = true; });
+    var maxId = 0, idSeen = {};
+    data.forEach(function(r){ var n = parseInt(r[0]); if (!isNaN(n) && n > maxId) maxId = n; });
+    for (var j = 0; j < data.length; j++) {
+      var rowNum = j + 2;
+      if (removed[rowNum] || (!data[j][0] && !data[j][1])) continue;
+      var id = String(data[j][0]);
+      if (!id) continue;
+      if (idSeen[id]) {
+        maxId++;
+        plan.renumber.push({ row: rowNum, oldId: id, newId: maxId });
+        plan.details.push([sheet.getName(), rowNum, "Shared id, kept (new id " + maxId + ")", "id also used by row " + idSeen[id]].concat(data[j].slice(0, 10).map(function(v){ return _dupCellStr(v); })));
+      } else {
+        idSeen[id] = rowNum;
+      }
+    }
+  }
+  return plan;
+}
+
+function _dupTargets() {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var targets = [
+    { sheet: ss.getSheetByName(SHEET_CASES), kind: "case" },
+    { sheet: ss.getSheetByName(SHEET_TIME_ENTRIES), kind: "entry" }
+  ];
+  try {
+    var archCases = _getArchiveTabIfExists(SHEET_CASES);
+    var archEntries = _getArchiveTabIfExists(SHEET_TIME_ENTRIES);
+    if (archCases) targets.push({ sheet: archCases, kind: "case" });
+    if (archEntries) targets.push({ sheet: archEntries, kind: "entry" });
+  } catch(e) {}
+  return targets;
+}
+
+function _dupWriteTab(name, header, rows) {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var tab = getOrCreateSheet(ss, name);
+  tab.clear();
+  tab.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight("bold");
+  tab.setFrozenRows(1);
+  if (rows.length) {
+    var width = header.length;
+    var padded = rows.map(function(r){ var x = r.slice(0, width); while (x.length < width) x.push(""); return x; });
+    tab.getRange(2, 1, padded.length, width).setNumberFormat("@").setValues(padded);
+  }
+}
+
+var DUP_HEADER = ["Tab", "Sheet row", "Action", "Note", "Col A", "Col B", "Col C", "Col D", "Col E", "Col F", "Col G", "Col H", "Col I", "Col J"];
+
+function previewDuplicateCleanup() {
+  var all = [], summary = [];
+  _dupTargets().forEach(function(t){
+    var plan = _dupPlanForSheet(t.sheet, t.kind);
+    all = all.concat(plan.details);
+    summary.push(t.sheet.getParent().getName() + " / " + t.sheet.getName() + ": " + plan.removeRows.length + " to remove, " + plan.renumber.length + " to renumber");
+  });
+  _dupWriteTab("dup_cleanup_preview", DUP_HEADER, all);
+  Logger.log("PREVIEW ONLY, nothing changed.\n" + summary.join("\n") + "\nDetails: dup_cleanup_preview tab.");
+}
+
+function applyDuplicateCleanup() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) { Logger.log("Another write is in progress; try again in a minute."); return; }
+  var started = Date.now(), summary = [], backup = [], finished = true;
+  try {
+    var targets = _dupTargets();
+    for (var t = 0; t < targets.length; t++) {
+      var sheet = targets[t].sheet;
+      var plan = _dupPlanForSheet(sheet, targets[t].kind);
+      // Renumber first (row numbers are still valid before any delete).
+      plan.renumber.forEach(function(x){ sheet.getRange(x.row, 1).setValue(x.newId); });
+      // Back up, then delete bottom-up so earlier row numbers stay valid.
+      var removedHere = 0;
+      var rows = plan.removeRows.slice().sort(function(a, b){ return b - a; });
+      var detailByRow = {};
+      plan.details.forEach(function(d){ if (/^Duplicate/.test(d[2])) detailByRow[d[1]] = d; });
+      for (var i = 0; i < rows.length; i++) {
+        if (Date.now() - started > DUP_CLEANUP_BUDGET_MS) { finished = false; break; }
+        backup.push(detailByRow[rows[i]]);
+        sheet.deleteRow(rows[i]);
+        removedHere++;
+      }
+      summary.push(sheet.getParent().getName() + " / " + sheet.getName() + ": removed " + removedHere + " of " + rows.length + ", renumbered " + plan.renumber.length);
+      if (!finished) break;
+    }
+  } finally {
+    // Append to the backup tab (keeps earlier runs' rows).
+    if (backup.length) {
+      var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var tab = ss.getSheetByName("dup_cleanup_removed");
+      if (!tab) { tab = ss.insertSheet("dup_cleanup_removed"); tab.getRange(1, 1, 1, DUP_HEADER.length).setValues([DUP_HEADER]).setFontWeight("bold"); tab.setFrozenRows(1); }
+      var padded = backup.filter(Boolean).map(function(r){ var x = r.slice(0, DUP_HEADER.length); while (x.length < DUP_HEADER.length) x.push(""); return x; });
+      if (padded.length) tab.getRange(tab.getLastRow() + 1, 1, padded.length, DUP_HEADER.length).setNumberFormat("@").setValues(padded);
+    }
+    bumpCacheVersion("cases"); bumpCacheVersion("entries"); bumpCacheVersion("entriesEdit"); bumpCacheVersion("casesArchive");
+    try { lock.releaseLock(); } catch(e) {}
+  }
+  Logger.log((finished ? "DONE.\n" : "STOPPED for time; run applyDuplicateCleanup() again to finish.\n") + summary.join("\n") + "\nRemoved rows are saved in the dup_cleanup_removed tab.");
 }
