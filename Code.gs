@@ -35,21 +35,27 @@ function isAdminRole(role) {
 
 // ============================================================
 // REPORTABLE ROSTER (v4.3.5)
-// Only people whose team_assignments role is PI Analyst or Senior PI
-// Analyst are reported on: the weekly digest, Needs Attention flags, and
+// Only people whose team_assignments role is Analyst or Senior Analyst
+// are reported on: the weekly digest, Needs Attention flags, and
 // every supervisor/admin view of the dashboard. Anyone else (Audit
 // Analyst, QA Coordinator, a typo, or someone not in team_assignments at
 // all) is left out of those, but can still sign in and see their own
 // numbers. Their rows are never deleted: move them back into an analyst
 // role and they reappear, history included.
 //
-// A blank role counts as PI Analyst, the same default the dashboard's
+// A blank role counts as Analyst, the same default the dashboard's
 // getEffectiveRole() has always used. Matching ignores case and extra
-// spaces. Admin/supervisor accounts (users tab) keep their existing
-// treatment: individually viewable by supervisors, never counted in team
-// totals (that exclusion lives in the digest and dashboard as before).
+// spaces. Admin/supervisor accounts (users tab) are never counted in the
+// weekly email or flags, but stay visible to supervisors on the dashboard
+// (individually; the dashboard keeps them out of team totals). Each person
+// always sees their own data when signed in.
 // ============================================================
-var REPORTABLE_ROLES = ["pi analyst", "senior pi analyst"];
+// Roles that are reported on, exactly as team_assignments names them
+// (case and extra spaces don't matter). Everything else is left out:
+// Sr Plat Integ Intel Spec, Fraud Ops Coordinator, QA Coordinator,
+// Training Coordinator, Audit Analyst, and any new role added later.
+// The PI-prefixed spellings are kept so either naming works.
+var REPORTABLE_ROLES = ["analyst", "senior analyst", "sr analyst", "sr. analyst", "pi analyst", "senior pi analyst", "pi senior analyst", "sr pi analyst"];
 function _normRoleName(s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); }
 
 var _rosterMemo = null;
@@ -63,7 +69,7 @@ function _getRoster() {
     if (ta && ta.getLastRow() > 1) {
       ta.getRange(2, 1, ta.getLastRow() - 1, 4).getValues().forEach(function(r){
         if (!r[0]) return;
-        var role = _normRoleName(r[3]) || "pi analyst";
+        var role = _normRoleName(r[3]) || "analyst";
         if (REPORTABLE_ROLES.indexOf(role) !== -1) reportable[_normRoleName(r[0])] = true;
       });
     }
@@ -84,9 +90,13 @@ function _isReportable(name) {
   var r = _getRoster(), k = _normRoleName(name);
   return !!r.reportable[k] && !r.privileged[k];
 }
-// Shown at all in a supervisor/admin view: analyst roles, plus admin/
-// supervisor accounts (which the dashboard keeps out of totals itself).
+// Shown in a supervisor/admin view of the dashboard: Analyst / Senior
+// Analyst roles, plus admin and supervisor accounts (the dashboard keeps
+// those out of team totals itself, as before). Whoever is signed in always
+// sees their own data. The weekly email uses _isReportable() instead, so
+// admins and supervisors are never counted there.
 function _isVisibleToSupervisors(name) {
+  if (_caller && name && _normRoleName(name) === _normRoleName(_caller.displayName)) return true;
   var r = _getRoster(), k = _normRoleName(name);
   return !!r.reportable[k] || !!r.privileged[k];
 }
@@ -1737,7 +1747,7 @@ function sendWeeklyDigest() {
     var weekStartStr = _digestFormatDate(weekStart), weekEndStr = _digestFormatDate(weekEnd);
 
     var privileged = _digestGetPrivilegedNames();
-    // v4.3.5: only PI Analyst / Senior PI Analyst roles are reported on.
+    // v4.3.5: only Analyst / Senior Analyst roles are reported on.
     var cases = _readAllCases(weekStartStr, weekEndStr).filter(function(c){ return !privileged[_digestNormName(c.analyst)] && _isReportable(c.analyst); });
     var byPlatform = { Kount:{count:0,ahtSecs:[]}, Zendesk:{count:0,ahtSecs:[]}, RADAR:{count:0,ahtSecs:[]} };
     var byAnalyst = {};
