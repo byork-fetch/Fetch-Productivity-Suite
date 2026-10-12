@@ -1291,8 +1291,10 @@ var CASE_LINK_TEMPLATES = {
   RADAR:   "https://support-dashboard.fetchrewards.com/fraud/{ID}"
 };
 function caseUrl(platform, id) {
-  var t = CASE_LINK_TEMPLATES[platform];
   id = String(id || "").trim();
+  // v4.3.5: RADAR cases worked in Zendesk (Vector Review tickets) are
+  // recorded by ticket number; RADAR's own ids are long hex user ids.
+  var t = (platform === "RADAR" && /^\d+$/.test(id)) ? CASE_LINK_TEMPLATES.Zendesk : CASE_LINK_TEMPLATES[platform];
   if (!t || !id || /-\d+$/.test(id) && !/^\d+$/.test(id)) return "";
   return t.replace("{ID}", encodeURIComponent(id));
 }
