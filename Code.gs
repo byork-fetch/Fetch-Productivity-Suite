@@ -1,6 +1,6 @@
 // ============================================================
 // PI PRODUCTIVITY SUITE — Google Apps Script Backend
-// Code.gs — v4.3.5 (GitHub Pages / fetch() compatible)
+// Code.gs — v4.3.6 (GitHub Pages / fetch() compatible)
 // ============================================================
 // All data reads now go through doGet with ?action=... params.
 // The dashboard is hosted on GitHub Pages and calls this
@@ -361,7 +361,7 @@ function doGet(e) {
 
   // Ping check (used by extension)
   if (params.ping) {
-    return jsonResponse({ ok: true, version: "4.3.5-server", serverTs: new Date().toISOString() });
+    return jsonResponse({ ok: true, version: "4.3.6-server", serverTs: new Date().toISOString() });
   }
 
   // Data requests from the GitHub Pages dashboard
@@ -1459,8 +1459,8 @@ function _digestFormatDate(d) {
 // Mirrors PLATFORM_TASK_MAP in index.html — kept as a separate server-side
 // copy rather than shared, since the dashboard's version lives in client
 // JS and isn't reachable from Apps Script.
-var DIGEST_PLATFORM_TASK_MAP = { Kount: "Rules Review", Zendesk: "Dispute Review", RADAR: "RADAR" };
-var DIGEST_PLATFORM_COLORS = { Kount: "#2f6fed", Zendesk: "#159a6c", RADAR: "#d99e2b" };
+var DIGEST_PLATFORM_TASK_MAP = { Kount: "Rules Review", Zendesk: "Dispute Review", RADAR: "RADAR", "Vector Review": "Vector Review" };
+var DIGEST_PLATFORM_COLORS = { Kount: "#2f6fed", Zendesk: "#159a6c", RADAR: "#d99e2b", "Vector Review": "#8a4fd1" };
 
 // Server-side port of index.html's computeAttentionFlags(), scoped to a
 // rolling 42-day window (same span Team Directory defaults to) and
@@ -1503,7 +1503,7 @@ function _digestComputeOpenAttentionFlagCount() {
       }
     });
 
-    ["Kount","Zendesk","RADAR"].forEach(function(platform){
+    ["Kount","Zendesk","RADAR","Vector Review"].forEach(function(platform){
       var teamTimed = cases.filter(function(c){ return c.platform===platform && typeof c.handle_seconds==="number" && c.handle_seconds>0; });
       if (teamTimed.length < 5) return;
       var teamAvg = teamTimed.reduce(function(a,c){return a+c.handle_seconds;},0)/teamTimed.length;
@@ -1704,12 +1704,12 @@ function _digestComputePlatformTrend(weekStart, privileged) {
   var priorStart = new Date(priorEnd.getTime() - 6*86400000);
   var priorCases = _readAllCases(_digestFormatDate(priorStart), _digestFormatDate(priorEnd))
     .filter(function(c){ return !privileged[_digestNormName(c.analyst)] && _isReportable(c.analyst); });
-  var byPlatform = { Kount: [], Zendesk: [], RADAR: [] };
+  var byPlatform = { Kount: [], Zendesk: [], RADAR: [], "Vector Review": [] };
   priorCases.forEach(function(c){
     if (byPlatform[c.platform] && typeof c.handle_seconds === "number" && c.handle_seconds > 0) byPlatform[c.platform].push(c.handle_seconds);
   });
   var result = {};
-  ["Kount","Zendesk","RADAR"].forEach(function(p){
+  ["Kount","Zendesk","RADAR","Vector Review"].forEach(function(p){
     var arr = byPlatform[p];
     result[p] = arr.length ? Math.round(arr.reduce(function(a,b){return a+b;},0)/arr.length) : null;
   });
@@ -1749,7 +1749,7 @@ function sendWeeklyDigest() {
     var privileged = _digestGetPrivilegedNames();
     // v4.3.5: only Analyst / Senior Analyst roles are reported on.
     var cases = _readAllCases(weekStartStr, weekEndStr).filter(function(c){ return !privileged[_digestNormName(c.analyst)] && _isReportable(c.analyst); });
-    var byPlatform = { Kount:{count:0,ahtSecs:[]}, Zendesk:{count:0,ahtSecs:[]}, RADAR:{count:0,ahtSecs:[]} };
+    var byPlatform = { Kount:{count:0,ahtSecs:[]}, Zendesk:{count:0,ahtSecs:[]}, RADAR:{count:0,ahtSecs:[]}, "Vector Review":{count:0,ahtSecs:[]} };
     var byAnalyst = {};
     cases.forEach(function(c){
       if (byPlatform[c.platform]) {
@@ -1772,7 +1772,7 @@ function sendWeeklyDigest() {
     // Prior-week AHT per platform, for the ▲/▼ context next to this week's number.
     var priorAht = _digestComputePlatformTrend(weekStart, privileged);
 
-    var platformRows = ["Kount","Zendesk","RADAR"].map(function(p){
+    var platformRows = ["Kount","Zendesk","RADAR","Vector Review"].map(function(p){
       var d = byPlatform[p];
       var curAvg = avgMin(d.ahtSecs);
       var curSec = curAvg != null ? curAvg*60 : null;
