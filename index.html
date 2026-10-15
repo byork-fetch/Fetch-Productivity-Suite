@@ -1723,7 +1723,13 @@ function loadTeamData(){
 // Training, Udemy, Lattice, Wellness etc. all inflated utilization.
 // Matching is case-insensitive "contains", so "Dispute Review" and
 // "Dispute Reviews", or a task with a 🧹Sweeping suffix, still match.
-var UTILIZED_TASKS=["SFA Escalations","SFA Questions","Dispute Review","Rules Review","RADAR","Vector Review","CF Audit","Training","AI/Innovation"];
+// Matches the PI Utilization Guide: utilization answers one question, is
+// the analyst spending 75% or more of their time in queue work (30+ hrs in
+// a 40 hr week). Queue work = Rules Review, RADAR, Vector Review, Dispute
+// Review and CF Audit for everyone, plus the Senior statuses SFA Escalations,
+// SFA Questions and Senior Sync Prep. Training (Meetings) and AI/Innovation
+// (Discretionary) no longer count.
+var UTILIZED_TASKS=["Rules Review","RADAR","Vector Review","Dispute Review","CF Audit","SFA Escalations","SFA Questions","Senior Sync Prep"];
 // Lunch is off the clock, so it's left out of the denominator entirely.
 var OFF_CLOCK_TASKS=["Lunch"];
 function _taskMatches(task,list){var t=String(task||"").toLowerCase();return list.some(function(s){return t.includes(s.toLowerCase());});}
