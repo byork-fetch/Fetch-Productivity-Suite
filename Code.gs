@@ -1349,6 +1349,41 @@ function unmarkFlagReviewed(flagKey, callerEmail) {
   } catch(e) { return { error: e.toString() }; }
 }
 
+// Bulk version of unmarkFlagReviewed() — the "undo a Mark All Reviewed"
+// path. Takes an array of flag keys and removes all their rows from
+// attention_reviews in ONE read + ONE rewrite, instead of a deleteRow() per
+// flag (slow, and row indexes shift after every delete). Under a script
+// lock so a mark happening at the same moment can't be overwritten by the
+// rewrite. Admin-only, same as the single restore.
+function unmarkFlagsReviewed(flagKeys, callerEmail) {
+  try {
+    if (!flagKeys || !flagKeys.length) return { success: true, restored: 0 };
+    var record = getUserRecord(callerEmail) || {};
+    if (!isAdminRole(record.role)) return { error: "Admin only" };
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(20000)) return { error: "Busy, please retry" };
+    try {
+      var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+      var sheet = ss.getSheetByName(SHEET_ATTENTION_REVIEWS);
+      if (!sheet || sheet.getLastRow() < 2) return { success: true, restored: 0 };
+      var remove = {};
+      flagKeys.forEach(function(k){ if (k) remove[String(k)] = true; });
+      var numRows = sheet.getLastRow() - 1;
+      var numCols = Math.max(sheet.getLastColumn(), 5);
+      var rows = sheet.getRange(2, 1, numRows, numCols).getValues();
+      var kept = rows.filter(function(r){ return !remove[String(r[0])]; });
+      var restored = rows.length - kept.length;
+      if (restored === 0) return { success: true, restored: 0 };
+      sheet.getRange(2, 1, numRows, numCols).clearContent();
+      if (kept.length) sheet.getRange(2, 1, kept.length, numCols).setValues(kept);
+      bumpCacheVersion("misc");
+      return { success: true, restored: restored };
+    } finally {
+      lock.releaseLock();
+    }
+  } catch(e) { return { error: e.toString() }; }
+}
+
 function debugAuth() {
   Logger.log("Active user: " + Session.getActiveUser().getEmail());
   Logger.log("Effective user: " + Session.getEffectiveUser().getEmail());
@@ -1908,6 +1943,9 @@ function doPost(e) {
       }
       if (payload.action === "unmarkFlagReviewed") {
         return jsonResponse(unmarkFlagReviewed(payload.flagKey, payload.callerEmail));
+      }
+      if (payload.action === "unmarkFlagsReviewed") {
+        return jsonResponse(unmarkFlagsReviewed(payload.flagKeys, payload.callerEmail));
       }
       if (payload.action === "upsertUser") {
         return jsonResponse(upsertUserData(payload.email, payload.role, payload.displayName, payload.callerEmail));
