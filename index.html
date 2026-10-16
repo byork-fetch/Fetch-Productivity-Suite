@@ -1984,9 +1984,26 @@ function renderArchivedBanner() {
   if (!el) return;
   if (!isAdminUser() || !state.archivedFlags || !state.archivedFlags.length) { el.innerHTML = ""; return; }
   var rows = state.archivedFlags.slice().sort(function(a,b){ return new Date(b.reviewed_at) - new Date(a.reviewed_at); });
+  var batches = getRecentBulkBatches(rows);
+  state.recentBulkBatches = batches;
+  var batchFlagTotal = batches.reduce(function(n,b){ return n + b.keys.length; }, 0);
+  var bulkPanel = !batches.length ? '' :
+    '<div style="padding:.6rem .75rem;border:1px dashed hsl(200,70%,50%);border-radius:.5rem;margin-bottom:.5rem">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap;margin-bottom:.4rem">'
+    + '<span style="font-size:.8rem;font-weight:600">Recent bulk marks (last '+BULK_UNDO_DAYS+' days)</span>'
+    + (batches.length > 1 ? '<button class="btn btn-outline btn-sm" onclick="undoBulkBatch(\'all\')">↺ Undo all ('+batchFlagTotal+')</button>' : '')
+    + '</div>'
+    + batches.map(function(b, i){
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.3rem 0">'
+          + '<span style="font-size:.8rem">'+fmtDateTime(b.reviewed_at)+' · '+esc(b.reviewed_by||"–")+' · <strong>'+b.keys.length+' flags</strong></span>'
+          + '<button class="btn btn-outline btn-sm" onclick="undoBulkBatch('+i+')" style="flex-shrink:0">↺ Undo this batch</button>'
+          + '</div>';
+      }).join("")
+    + '</div>';
   el.innerHTML = '<div class="collapsible" style="border-left:4px solid hsl(200,70%,50%);margin-bottom:1.25rem">'
-    + '<button class="collapsible-trigger" onclick="toggleCollapsible(\'archived\')"><span>🗄️ Reviewed / Archived ('+rows.length+')</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>'
+    + '<button class="collapsible-trigger" onclick="toggleCollapsible(\'archived\')"><span>🗄️ Reviewed / Archived ('+rows.length+')'+(batches.length?' · '+batches.length+' recent bulk mark'+(batches.length===1?'':'s'):'')+'</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>'
     + '<div class="collapsible-content attention-content" id="archivedContent">'
+    + bulkPanel
     + rows.map(function(r){
         return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.5rem .75rem;background:var(--muted-bg);border-radius:.5rem">'
           + '<span style="font-size:.85rem"><strong>'+esc(r.analyst)+'</strong> — '+esc(r.message)+'<br><span style="font-size:.72rem;color:var(--text-muted)">Reviewed by '+esc(r.reviewed_by||"–")+' · '+fmtDateTime(r.reviewed_at)+'</span></span>'
@@ -1994,6 +2011,49 @@ function renderArchivedBanner() {
           + '</div>';
       }).join("")
     + '</div></div>';
+}
+
+// UNDO BULK MARK — every flag cleared by one "Mark All Reviewed" / "Mark
+// Selected" click is written by markFlagsReviewed with the SAME reviewed_at
+// timestamp and reviewed_by, so grouping archived rows on that pair
+// recovers each click as a batch. Batches of 2+ flags from the last
+// BULK_UNDO_DAYS days are offered for one-click restore (single ✓ marks
+// are 1-flag "batches" and stay on the per-row Restore button).
+var BULK_UNDO_DAYS = 14;
+function getRecentBulkBatches(rows){
+  var cutoff = Date.now() - BULK_UNDO_DAYS * 86400000;
+  var groups = {}, order = [];
+  rows.forEach(function(r){
+    var t = new Date(r.reviewed_at).getTime();
+    if (isNaN(t) || t < cutoff) return;
+    var id = r.reviewed_at + "|" + (r.reviewed_by || "");
+    if (!groups[id]) { groups[id] = { reviewed_at: r.reviewed_at, reviewed_by: r.reviewed_by, keys: [] }; order.push(id); }
+    groups[id].keys.push(r.flag_key);
+  });
+  return order.map(function(id){ return groups[id]; }).filter(function(g){ return g.keys.length > 1; });
+}
+
+function undoBulkBatch(which){
+  var batches = state.recentBulkBatches || [];
+  var keys = which === 'all'
+    ? batches.reduce(function(acc,b){ return acc.concat(b.keys); }, [])
+    : ((batches[which] && batches[which].keys) || []);
+  if (!keys.length) return;
+  var label = which === 'all' ? "all "+batches.length+" recent bulk marks" : "this bulk mark";
+  if (!confirm("Undo "+label+"? "+keys.length+" flag"+(keys.length===1?"":"s")+" will go back to Needs Attention.")) return;
+  apiPost({action:"unmarkFlagsReviewed", flagKeys:keys, callerEmail:state.user.email})
+    .then(function(res){
+      if (res && res.error) { toast("error", res.error); return; }
+      var gone = {};
+      keys.forEach(function(k){ gone[k] = true; delete state.reviewedFlagKeys[k]; });
+      state.archivedFlags = (state.archivedFlags||[]).filter(function(f){ return !gone[f.flag_key]; });
+      var args = state.lastAttentionArgs || {};
+      renderAttentionBanner(args.assignments, args.entries, args.cases);
+      renderArchivedBanner();
+      var n = (res && res.restored != null) ? res.restored : keys.length;
+      toast("success","Restored "+n+" flag"+(n===1?"":"s")+" — flags outside the current date range show when you widen it");
+    })
+    .catch(function(err){ toast("error","Failed: "+err); });
 }
 
 function restoreFlag(key){
