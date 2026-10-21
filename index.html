@@ -1533,7 +1533,7 @@ var ADD_ENTRY_ACTIVITIES = [
   "Dispute Review","Rules Review","RADAR","Vector Review","CF Audit","Lattice","Udemy","Medallia",
   "AI/Innovation","Break (15 min)","Catching Up","Equipment Issue","Inclusion Calendar Programs",
   "Lunch","Meeting","Senior Sync Prep","SFA Escalations","SFA Questions","Team & Project Initiatives",
-  "Training","Wellness"
+  "Training","Transaction Transformer Audit","Wellness"
 ];
 var ADD_ENTRY_MAX_HOURS = 12;
 var ADD_ENTRY_ANALYST_DAYS_BACK = 7; // supervisors aren't limited
@@ -1733,10 +1733,10 @@ function loadTeamData(){
 // Matches the PI Utilization Guide: utilization answers one question, is
 // the analyst spending 75% or more of their time in queue work (30+ hrs in
 // a 40 hr week). Queue work = Rules Review, RADAR, Vector Review, Dispute
-// Review and CF Audit for everyone, plus the Senior statuses SFA Escalations,
-// SFA Questions and Senior Sync Prep. Training (Meetings) and AI/Innovation
+// Review, CF Audit and Transaction Transformer Audit (v4.3.8) for everyone,
+// plus the Senior statuses SFA Escalations, SFA Questions and Senior Sync Prep. Training (Meetings) and AI/Innovation
 // (Discretionary) no longer count.
-var UTILIZED_TASKS=["Rules Review","RADAR","Vector Review","Dispute Review","CF Audit","SFA Escalations","SFA Questions","Senior Sync Prep"];
+var UTILIZED_TASKS=["Rules Review","RADAR","Vector Review","Dispute Review","CF Audit","Transaction Transformer Audit","SFA Escalations","SFA Questions","Senior Sync Prep"];
 // Lunch is off the clock, so it's left out of the denominator entirely.
 var OFF_CLOCK_TASKS=["Lunch"];
 function _taskMatches(task,list){var t=String(task||"").toLowerCase();return list.some(function(s){return t.includes(s.toLowerCase());});}
