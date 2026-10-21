@@ -1075,6 +1075,7 @@ function applyCaseFilter() {
   state.priorCases = filterCasesForCurrentScope(state.allPriorRangeCases||[]);
   updateCaseSourceFilterOptions();
   updateCaseLogAnalystFilterOptions();
+  renderCasePlatformFilterRow(); // v4.3.9: RADAR button depends on the range
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
   if (state.trendsLoaded) loadTrendsData();
 }
@@ -1208,9 +1209,11 @@ function renderCaseStats() {
     {label:"Cases ("+periodLabel()+")",value:String(inRange.length)+deltaBadge(inRange.length,prior.length,null),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")+(vc.length?" · Vector Review "+vc.length:"")+" · vs. prior period: "+prior.length},
     {label:"Kount AHT",value:fmtSeconds(ka.avgSec)+deltaBadge(ka.avgSec,pka.avgSec,true),sub:ahtSub(ka,kBulk)},
     {label:"Zendesk AHT",value:fmtSeconds(za.avgSec)+deltaBadge(za.avgSec,pza.avgSec,true),sub:ahtSub(za,zBulk)},
-    {label:"RADAR AHT",value:fmtSeconds(ra.avgSec)+deltaBadge(ra.avgSec,pra.avgSec,true),sub:ahtSub(ra,rBulk)},
     {label:"Vector Review AHT",value:fmtSeconds(va.avgSec)+deltaBadge(va.avgSec,pva.avgSec,true),sub:ahtSub(va,0)}
   ];
+  // v4.3.9: RADAR is retired. Its AHT card only appears for date ranges
+  // that still have RADAR cases in them (historical review).
+  if (rc.length) cards.splice(3,0,{label:"RADAR AHT",value:fmtSeconds(ra.avgSec)+deltaBadge(ra.avgSec,pra.avgSec,true),sub:ahtSub(ra,rBulk)});
   var g=document.getElementById("caseStatsGrid");
   if (g) g.innerHTML=cards.map(function(c){return '<div class="stat-card case-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("");
 }
@@ -1220,6 +1223,8 @@ function renderCaseChart() {
   var emptyEl=document.getElementById("caseChartEmpty");
   var counts={Kount:0,Zendesk:0,RADAR:0,"Vector Review":0};
   state.cases.forEach(function(c){if(counts[c.platform]!==undefined)counts[c.platform]++;});
+  // v4.3.9: RADAR bar only when the range has RADAR cases (historical).
+  if (!counts.RADAR) delete counts.RADAR;
   var labels=Object.keys(counts), values=labels.map(function(k){return counts[k];});
   if (state.caseChart){state.caseChart.destroy();state.caseChart=null;}
   if (values.every(function(v){return v===0;})){
@@ -1229,7 +1234,7 @@ function renderCaseChart() {
   }
   canvas.style.display="block";
   if (emptyEl) emptyEl.style.display="none";
-  state.caseChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:["hsl(220,80%,55%)","hsl(160,55%,40%)","hsl(45,90%,45%)","hsl(275,60%,55%)"],borderRadius:6}]},options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0,color:state.isDark?"#ccc":"#555"}},x:{ticks:{color:state.isDark?"#ccc":"#555"},grid:{display:false}}},responsive:true,maintainAspectRatio:false}});
+  state.caseChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:labels.map(function(k){return PLATFORM_COLORS[k];}),borderRadius:6}]},options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0,color:state.isDark?"#ccc":"#555"}},x:{ticks:{color:state.isDark?"#ccc":"#555"},grid:{display:false}}},responsive:true,maintainAspectRatio:false}});
 }
 
 function renderCaseAnalystTable() {
@@ -1240,7 +1245,10 @@ function renderCaseAnalystTable() {
 }
 
 function renderCasePlatformFilterRow() {
-  var opts = [["all","All"],["Kount","Kount"],["Zendesk","Zendesk"],["RADAR","RADAR"],["Vector Review","Vector Review"]];
+  var opts = [["all","All"],["Kount","Kount"],["Zendesk","Zendesk"],["Vector Review","Vector Review"]];
+  // v4.3.9: RADAR filter only shows when the range has RADAR cases (or it's
+  // the filter already picked, so it can be switched off).
+  if ((state.cases||[]).some(function(c){return c.platform==='RADAR';}) || state.casePlatformFilter==='RADAR') opts.splice(3,0,["RADAR","RADAR"]);
   var row = document.getElementById("casePlatformFilterRow");
   if (!row) return;
   row.innerHTML = opts.map(function(o){
@@ -1530,7 +1538,7 @@ function saveEdit(){
 // rule as the edit pencil). Code.gs re-checks this against callerEmail.
 // ============================================================
 var ADD_ENTRY_ACTIVITIES = [
-  "Dispute Review","Rules Review","RADAR","Vector Review","CF Audit","Lattice","Udemy","Medallia",
+  "Dispute Review","Rules Review","Vector Review","CF Audit","Lattice","Udemy","Medallia",
   "AI/Innovation","Break (15 min)","Catching Up","Equipment Issue","Inclusion Calendar Programs",
   "Lunch","Meeting","Senior Sync Prep","SFA Escalations","SFA Questions","Team & Project Initiatives",
   "Training","Transaction Transformer Audit","Wellness"
@@ -1736,6 +1744,8 @@ function loadTeamData(){
 // Review, CF Audit and Transaction Transformer Audit (v4.3.8) for everyone,
 // plus the Senior statuses SFA Escalations, SFA Questions and Senior Sync Prep. Training (Meetings) and AI/Innovation
 // (Discretionary) no longer count.
+// RADAR stays in this list (v4.3.9) so time logged before it was retired
+// still counts as queue work when looking back at older date ranges.
 var UTILIZED_TASKS=["Rules Review","RADAR","Vector Review","Dispute Review","CF Audit","Transaction Transformer Audit","SFA Escalations","SFA Questions","Senior Sync Prep"];
 // Lunch is off the clock, so it's left out of the denominator entirely.
 var OFF_CLOCK_TASKS=["Lunch"];
@@ -2134,7 +2144,9 @@ var PLATFORM_TASK_MAP = { Kount: "Rules Review", Zendesk: "Dispute Review", RADA
 var PLATFORM_COLORS   = { Kount: "hsl(220,80%,55%)", Zendesk: "hsl(160,55%,40%)", RADAR: "hsl(45,90%,45%)", "Vector Review": "hsl(275,60%,55%)" };
 
 function platformBreakdown(entries, cases) {
-  return ["Kount","Zendesk","RADAR","Vector Review"].map(function(platform){
+  // v4.3.9: RADAR card only when this range has RADAR time or cases.
+  var hasRadar = cases.some(function(c){ return c.platform === "RADAR"; }) || entries.some(function(e){ return e.task === "RADAR"; });
+  return ["Kount","Zendesk"].concat(hasRadar ? ["RADAR"] : [], ["Vector Review"]).map(function(platform){
     var taskName  = PLATFORM_TASK_MAP[platform];
     var timeSecs  = sum(entries.filter(function(e){ return e.task === taskName; }), "duration");
     var platCases = cases.filter(function(c){ return c.platform === platform; });
