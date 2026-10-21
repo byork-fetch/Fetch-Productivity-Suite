@@ -1,6 +1,6 @@
 // ============================================================
 // PI PRODUCTIVITY SUITE — Google Apps Script Backend
-// Code.gs — v4.3.6 (GitHub Pages / fetch() compatible)
+// Code.gs — v4.3.9 (GitHub Pages / fetch() compatible)
 // ============================================================
 // All data reads now go through doGet with ?action=... params.
 // The dashboard is hosted on GitHub Pages and calls this
@@ -1852,7 +1852,11 @@ function sendWeeklyDigest() {
     // Prior-week AHT per platform, for the ▲/▼ context next to this week's number.
     var priorAht = _digestComputePlatformTrend(weekStart, privileged);
 
-    var platformRows = ["Kount","Zendesk","RADAR","Vector Review"].map(function(p){
+    // v4.3.9: RADAR is retired, so its row only shows for a week that
+    // still has RADAR cases in it (e.g. an analyst on an older extension).
+    var platformRows = ["Kount","Zendesk","RADAR","Vector Review"].filter(function(p){
+      return p !== "RADAR" || byPlatform.RADAR.count > 0;
+    }).map(function(p){
       var d = byPlatform[p];
       var curAvg = avgMin(d.ahtSecs);
       var curSec = curAvg != null ? curAvg*60 : null;
