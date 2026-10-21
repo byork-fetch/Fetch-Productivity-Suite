@@ -500,6 +500,7 @@ function _readEntriesFromSheet(sheet, startDate, endDate) {
   var headers = ["id","analyst","project","task","duration","date","category","start_time","end_time","edit_reason","edited_at","original_duration","sheet_row_id","entry_source"].slice(0, nCols);
   var start = new Date(startDate + "T00:00:00"), end = new Date(endDate + "T23:59:59");
   var tz = Session.getScriptTimeZone();
+  var sheetTz = sheet.getParent().getSpreadsheetTimeZone();
   var results = [];
   var skipped = 0;
   for (var i = 0; i < data.length; i++) {
@@ -509,9 +510,13 @@ function _readEntriesFromSheet(sheet, startDate, endDate) {
     var entryDate = (dateVal instanceof Date) ? dateVal : new Date(dateVal + "T00:00:00");
     if (isNaN(entryDate.getTime())) { skipped++; continue; } // malformed date — skip, but track it
     if (entryDate >= start && entryDate <= end) {
+      var dateYmd = (dateVal instanceof Date) ? _ymd(dateVal, tz) : String(dateVal).substring(0, 10);
       var entry = {};
       for (var j = 0; j < headers.length; j++) {
         var val = row[j];
+        // v4.3.6 FIX: start_time (H) / end_time (I) stay full timestamps,
+        // never collapsed to a date like the other Date columns.
+        if (j === 7 || j === 8) { entry[headers[j]] = _entryTimeCellToString(val, dateYmd, sheetTz); continue; }
         entry[headers[j]] = (val instanceof Date) ? _ymd(val, tz) : (val === "" ? null : val);
       }
       results.push(entry);
@@ -612,10 +617,24 @@ function updateTimeEntryData(id, updates, callerEmail) {
     var newDuration = (updates.duration !== undefined && updates.duration !== null && !isNaN(Number(updates.duration)))
       ? Number(updates.duration) : data[rowIndex - 2][4];
 
+    // v4.3.6 FIX: start/end are stored as full ISO text (same as extension
+    // and Add Missed Time entries). Writing a bare "HH:MM:SS" let Sheets
+    // turn it into a time-only cell, which read back as 12/30/1899.
+    // _toEntryIso also accepts the old bare-UTC format, so a browser still
+    // running the previous index.html saves correctly too.
+    var rowDateVal = data[rowIndex - 2][5];
+    var rowDateStr = (rowDateVal instanceof Date) ? _ymd(rowDateVal, Session.getScriptTimeZone()) : String(rowDateVal || "").substring(0, 10);
+    var newStart = _toEntryIso(rowDateStr, updates.start_time);
+    var newEnd   = _toEntryIso(rowDateStr, updates.end_time);
+    if (newStart && newEnd && new Date(newEnd).getTime() <= new Date(newStart).getTime()) {
+      return { error: "End time must be after start time" };
+    }
+
     sheet.getRange(rowIndex, 4).setValue(newTask);
     sheet.getRange(rowIndex, 5).setValue(newDuration);
-    sheet.getRange(rowIndex, 8).setValue(updates.start_time || "");
-    sheet.getRange(rowIndex, 9).setValue(updates.end_time   || "");
+    var timeRange = sheet.getRange(rowIndex, 8, 1, 2);
+    timeRange.setNumberFormat("@"); // keep ISO times as text
+    timeRange.setValues([[newStart, newEnd]]);
     sheet.getRange(rowIndex, 10).setValue(updates.edit_reason || "");
     sheet.getRange(rowIndex, 11).setValue(new Date().toISOString());
 
@@ -663,6 +682,31 @@ function _entryTimeMs(dateStr, t) {
   var d = s.indexOf("T") !== -1 ? new Date(s) : new Date(dateStr + "T" + s + "Z");
   var ms = d.getTime();
   return isNaN(ms) ? null : ms;
+}
+
+// v4.3.6 FIX: Start/End cells can come back from Sheets as Date objects.
+// A full date+time cell is returned as ISO. A time-only cell (what the old
+// edit modal wrote: a bare "HH:MM:SS" that Sheets turned into a time on its
+// day zero, 1899-12-30) is rebuilt on the entry's own date. Its clock
+// reading is the UTC time the modal sent, so existing bad rows display
+// correctly again without editing the sheet.
+function _entryTimeCellToString(val, dateStr, sheetTz) {
+  if (val === "" || val === null || val === undefined) return null;
+  if (!(val instanceof Date)) return val;
+  if (isNaN(val.getTime())) return null;
+  if (val.getFullYear() < 1971) {
+    if (!dateStr) return null;
+    var hms = Utilities.formatDate(val, sheetTz || Session.getScriptTimeZone(), "HH:mm:ss");
+    return new Date(dateStr + "T" + hms + "Z").toISOString();
+  }
+  return val.toISOString();
+}
+
+// Any start/end value the dashboard sends (full ISO, or a bare UTC
+// "HH:MM:SS" from an older cached page) becomes a full ISO string.
+function _toEntryIso(dateStr, t) {
+  var ms = _entryTimeMs(dateStr, t);
+  return ms === null ? "" : new Date(ms).toISOString();
 }
 
 function addTimeEntryData(entry, callerEmail) {
@@ -713,12 +757,13 @@ function addTimeEntryData(entry, callerEmail) {
     if (sheet.getLastRow() > 1) {
       var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
       var tzr = Session.getScriptTimeZone();
+      var sheetTz = ss.getSpreadsheetTimeZone();
       for (var i = 0; i < rows.length; i++) {
         var n = parseInt(rows[i][0]); if (!isNaN(n) && n > maxId) maxId = n;
         if (String(rows[i][1]) !== analyst) continue;
         var rDate = (rows[i][5] instanceof Date) ? _ymd(rows[i][5], tzr) : String(rows[i][5]).substring(0, 10);
         if (rDate !== dateStr) continue;
-        var rs = _entryTimeMs(rDate, rows[i][7]), re = _entryTimeMs(rDate, rows[i][8]);
+        var rs = _entryTimeMs(rDate, _entryTimeCellToString(rows[i][7], rDate, sheetTz)), re = _entryTimeMs(rDate, _entryTimeCellToString(rows[i][8], rDate, sheetTz));
         if (rs === null || re === null) continue;
         if (Math.min(endMs, re) - Math.max(startMs, rs) > ADD_ENTRY_OVERLAP_TOLERANCE_MS) {
           return { error: "Overlaps an existing " + rows[i][3] + " entry that day" };
