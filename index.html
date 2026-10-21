@@ -1510,7 +1510,14 @@ function saveEdit(){
   if(reason==="Other"){reason=document.getElementById("edit_customReason").value.trim();if(!reason){toast("error","Please provide a custom reason");return;}}
   var h=parseInt(document.getElementById("edit_hours").value)||0,m=parseInt(document.getElementById("edit_mins").value)||0,s=parseInt(document.getElementById("edit_secs").value)||0;
   var entry=state.editEntry;
-  var updates={task:document.getElementById("edit_task").value.trim(),duration:h*3600+m*60+s,start_time:document.getElementById("edit_startTime").value?localToUtc(entry.date,document.getElementById("edit_startTime").value):null,end_time:document.getElementById("edit_endTime").value?localToUtc(entry.date,document.getElementById("edit_endTime").value):null,edit_reason:reason};
+  // v4.3.6 FIX: send full ISO timestamps (same as Add Missed Time), built
+  // from the entry's own date in the editor's local time. The old bare
+  // "HH:MM:SS" UTC string became a time-only 1899 cell in Sheets, and also
+  // landed on the wrong day for evening edits past UTC midnight.
+  var startVal=document.getElementById("edit_startTime").value,endVal=document.getElementById("edit_endTime").value;
+  var startMs=startVal?addEntryLocalMs(entry.date,startVal):null,endMs=endVal?addEntryLocalMs(entry.date,endVal):null;
+  if(startMs!==null&&endMs!==null&&endMs<=startMs){toast("error","End time must be after start time");return;}
+  var updates={task:document.getElementById("edit_task").value.trim(),duration:h*3600+m*60+s,start_time:startMs!==null?new Date(startMs).toISOString():null,end_time:endMs!==null?new Date(endMs).toISOString():null,edit_reason:reason};
   document.getElementById("saveEditBtn").disabled=true;document.getElementById("saveEditBtn").textContent="Saving…";
   apiPost({action:"updateTimeEntry",id:entry.id,updates:updates,callerEmail:state.user.email})
     .then(function(res){document.getElementById("saveEditBtn").disabled=false;document.getElementById("saveEditBtn").textContent="Save Changes";if(res.error){toast("error",res.error);return;}toast("success","Entry updated!");closeEditModal();fetchDashboardData();})
