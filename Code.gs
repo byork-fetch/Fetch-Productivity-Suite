@@ -1,6 +1,6 @@
 // ============================================================
 // PI PRODUCTIVITY SUITE — Google Apps Script Backend
-// Code.gs — v4.3.9 (GitHub Pages / fetch() compatible)
+// Code.gs — v4.4.0 (GitHub Pages / fetch() compatible)
 // ============================================================
 // All data reads now go through doGet with ?action=... params.
 // The dashboard is hosted on GitHub Pages and calls this
@@ -421,6 +421,9 @@ function doGet(e) {
       if (action === "getTeamData") {
         return jsonResponse(getTeamData(params.start, params.end, _caller.email));
       }
+      if (action === "myAssignment") {
+        return jsonResponse(getMyAssignment());
+      }
       if (action === "getAssignments") {
         return jsonResponse(_caller.privileged ? getAssignmentsList().filter(function(a){ return _isVisibleToSupervisors(a.analyst_name); }) : []);
       }
@@ -837,10 +840,7 @@ function _getTeamDataFull(startDate, endDate) {
       var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
       var taSheet = ss.getSheetByName(SHEET_TEAM_ASSIGN);
       if (!taSheet || taSheet.getLastRow() < 2) return { assignments: [], entries: [], cases: [] };
-      var assignData  = taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 4).getValues();
-      var assignments = assignData
-        .filter(function(r){ return r[0]; })
-        .map(function(r){ return { analyst_name: r[0].toString(), supervisor_email: r[1].toString(), team_name: r[2].toString(), role: r[3].toString() }; });
+      var assignments = _readAssignmentRows(taSheet);
       var visibleAnalysts = {};
       assignments.forEach(function(a){ visibleAnalysts[a.analyst_name] = true; });
       var entries = getTimeEntries(startDate, endDate);
@@ -860,16 +860,50 @@ function _getTeamDataFull(startDate, endDate) {
 // filter dropdowns without waiting on a full getTeamData() call tied to
 // whatever date range happens to be selected. Same shape as getTeamData()'s
 // assignments array so both callers can share client-side logic.
+// v4.4.0: team_assignments column E is "Hire Date" (supervisors fill it in).
+// It sets a new hire's pace ramp-up on the dashboard and in the extension:
+// days 1-30 5/hr, 31-60 10/hr, 61-90 15/hr, then the role's target.
+// Columns: A analyst_name, B supervisor_email, C team_name, D role, E hire date.
+function _readAssignmentRows(taSheet) {
+  var cols = Math.min(5, taSheet.getMaxColumns());
+  var data = taSheet.getRange(2, 1, taSheet.getLastRow() - 1, cols).getValues();
+  var tz = Session.getScriptTimeZone();
+  return data
+    .filter(function(r){ return r[0]; })
+    .map(function(r){
+      var h = cols >= 5 ? r[4] : "";
+      var hire = "";
+      if (h instanceof Date) hire = _ymd(h, tz);
+      else if (h) { var m = String(h).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/) || String(h).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (m) hire = m[1].length === 4 ? m[1] + "-" + ("0" + m[2]).slice(-2) + "-" + ("0" + m[3]).slice(-2) : m[3] + "-" + ("0" + m[1]).slice(-2) + "-" + ("0" + m[2]).slice(-2); }
+      return { analyst_name: r[0].toString(), supervisor_email: r[1].toString(), team_name: r[2].toString(), role: r[3].toString(), hire_date: hire };
+    });
+}
+
+// v4.4.0: the signed-in person's own role and hire date (analysts don't
+// get the team's assignments, but the dashboard needs their own pace target).
+function getMyAssignment() {
+  var me = _caller ? _caller.displayName : "";
+  var row = getAssignmentsList().filter(function(a){ return a.analyst_name === me; })[0];
+  return row ? { role: row.role, hire_date: row.hire_date } : { role: "", hire_date: "" };
+}
+
+// v4.4.0: the extension asks for an analyst's hire date (by Employee Name)
+// so a new hire's ramp-up switches on by itself.
+function getHireDateFor(name) {
+  var n = String(name || "").trim();
+  if (!n) return { hire_date: null };
+  var row = getAssignmentsList().filter(function(a){ return a.analyst_name === n; })[0];
+  return { hire_date: row && row.hire_date ? row.hire_date : null };
+}
+
 function getAssignmentsList() {
   try {
     return cachedCall("assignments_list", 300, function() {
       var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
       var taSheet = ss.getSheetByName(SHEET_TEAM_ASSIGN);
       if (!taSheet || taSheet.getLastRow() < 2) return [];
-      var assignData = taSheet.getRange(2, 1, taSheet.getLastRow() - 1, 4).getValues();
-      return assignData
-        .filter(function(r){ return r[0]; })
-        .map(function(r){ return { analyst_name: r[0].toString(), supervisor_email: r[1].toString(), team_name: r[2].toString(), role: r[3].toString() }; });
+      return _readAssignmentRows(taSheet);
     }, ["misc"]);
   } catch(e) { return []; }
 }
@@ -2016,6 +2050,7 @@ function doPost(e) {
       return jsonResponse({ error: "Unauthorized" });
     }
     if (payload.kind === "case") return handleCaseRow(payload);
+    if (payload.kind === "hireDate") return jsonResponse(getHireDateFor(payload.analyst));
     var required = ["analyst","task","date","duration"];
     for (var i = 0; i < required.length; i++) {
       if (!payload[required[i]]) return jsonResponse({ error: "Missing field: " + required[i] });
