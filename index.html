@@ -81,6 +81,26 @@ select{padding:.4rem .8rem;border:1px solid var(--border);border-radius:.5rem;ba
 .main-grid{display:grid;grid-template-columns:1fr 320px;gap:1.5rem;margin-bottom:1.5rem;}
 @media(max-width:900px){.main-grid{grid-template-columns:1fr;}}
 .cases-grid{align-items:stretch;}
+/* v4.4.0: Hour by Hour + Pace */
+.pace-grid{grid-template-columns:1fr 360px;}
+@media(max-width:900px){.pace-grid{grid-template-columns:1fr;}}
+.pace-card-sub{font-size:.8rem;color:var(--text-muted);margin-top:.2rem}
+.pace-sum{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;font-size:.85rem;color:var(--text-muted)}
+.pace-sum strong{font-size:1.5rem;color:var(--text);font-variant-numeric:tabular-nums}
+.pace-split{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden;background:var(--muted-bg);margin:.6rem 0 .4rem}
+.pace-split span{display:block;height:100%}
+.pace-g{background:hsl(152,62%,33%)}.pace-y{background:hsl(43,90%,45%)}.pace-r{background:hsl(6,63%,46%)}
+.pace-legend{display:flex;flex-wrap:wrap;gap:.25rem .9rem;font-size:.78rem;color:var(--text-muted)}
+.pace-legend i{display:inline-block;width:.55rem;height:.55rem;border-radius:2px;margin-right:.3rem}
+.pace-table{width:100%;min-width:0;border-collapse:collapse;margin-top:.9rem;font-size:.85rem}
+.pace-table th{font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);font-weight:600;text-align:left;padding:.35rem .25rem;border-bottom:1px solid var(--border);position:static;background:transparent}
+.pace-table td{padding:.45rem .25rem;border-top:none;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums}
+.pace-table tr:hover td{background:transparent}
+.pace-table td.n,.pace-table th.n{text-align:right}
+.pace-over{color:hsl(6,63%,46%);font-weight:600}
+.pace-note{font-size:.75rem;color:var(--text-muted);margin-top:.6rem}
+.pace-pct{font-size:.72rem;color:var(--text-muted)}
+.btn.active-filter{background:var(--primary);color:#fff;border-color:var(--primary)}
 .cases-grid .left-col{display:flex;flex-direction:column;}
 .cases-grid .left-col .card{flex:1;display:flex;flex-direction:column;}
 .cases-grid .left-col .card-body{flex:1;display:flex;flex-direction:column;min-height:220px;}
@@ -286,6 +306,16 @@ textarea{resize:vertical;min-height:80px;}
           <div class="card-body"><div class="analyst-table" id="caseAnalystTable"><div class="empty">No cases yet</div></div></div>
         </div>
       </div>
+      <!-- v4.4.0: Hour by Hour and Pace -->
+      <div class="main-grid cases-grid pace-grid">
+        <div class="left-col">
+          <div class="card"><div class="card-header"><h2>Hour by Hour</h2><p class="pace-card-sub" id="caseHourSub">cases saved each hour</p></div><div class="card-body chart-wrap"><canvas id="caseHourChart"></canvas><div id="caseHourEmpty" class="empty" style="display:none">No cases for this period</div></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2>Pace</h2><p class="pace-card-sub" id="casePaceSub">timed cases against the pace target</p></div>
+          <div class="card-body" id="casePaceBody"><div class="empty">No cases yet</div></div>
+        </div>
+      </div>
       <div class="collapsible" id="trendsSection" data-supervisor-only="1">
         <button class="collapsible-trigger" onclick="toggleTrendsSection()"><span>📈 Case Trends (Last 12 Weeks)</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
         <div class="collapsible-content" id="trendsContent">
@@ -322,6 +352,7 @@ textarea{resize:vertical;min-height:80px;}
               <select id="caseLogAnalystFilterSelect" class="form-select" style="width:auto"><option value="all">All Analysts</option></select>
               <select id="caseSourceFilterSelect" class="form-select" style="width:auto"><option value="all">All Sources</option></select>
               <input type="text" id="caseSearchInput" class="date-input" placeholder="Search Case ID…" style="width:160px"/>
+              <button class="btn btn-outline btn-sm" id="caseOverTargetBtn" type="button" onclick="toggleCaseOverTarget()" aria-pressed="false">Over target only</button>
               <button class="btn btn-outline btn-sm" onclick="exportCaseLogCSV()">⬇ Export CSV</button>
             </div>
           </div>
@@ -725,10 +756,12 @@ function loadAssignments(){
     state.assignments = Array.isArray(list) ? list : [];
     state.analystTeamMap = {};
     state.analystRoleMap = {};
+    state.analystHireMap = {};
     state.hiddenAssignmentNames = {};
     state.assignments.forEach(function(a){
       state.analystTeamMap[normName(a.analyst_name)] = a.team_name || a.supervisor_email;
       state.analystRoleMap[normName(a.analyst_name)] = getEffectiveRole(a);
+      if (a.hire_date) state.analystHireMap[normName(a.analyst_name)] = a.hire_date;
       if (isHiddenAssignment(a)) state.hiddenAssignmentNames[normName(a.analyst_name)] = true;
     });
     updateDashboardTeamRoleFilterOptions();
@@ -814,6 +847,11 @@ function waitForGSI(cb) {
 
 function bootWithUser(user) {
   state.user = user;
+  // v4.4.0: your own role and hire date set your pace target on the dashboard.
+  apiGet("myAssignment").then(function(a){
+    state.myAssignment = (a && !a.error) ? a : null;
+    if (state.cases) { renderCaseAnalystTable(); renderCaseLog(); renderCasePace(); }
+  }).catch(function(){});
   loadFilterPrefs();
   document.getElementById("app-loading").style.display = "none";
   document.getElementById("app").style.display = "block";
@@ -1077,6 +1115,7 @@ function applyCaseFilter() {
   updateCaseLogAnalystFilterOptions();
   renderCasePlatformFilterRow(); // v4.3.9: RADAR button depends on the range
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
+  renderCaseHourly(); renderCasePace(); // v4.4.0
   if (state.trendsLoaded) loadTrendsData();
 }
 
@@ -1237,11 +1276,146 @@ function renderCaseChart() {
   state.caseChart=new Chart(canvas,{type:"bar",data:{labels:labels,datasets:[{data:values,backgroundColor:labels.map(function(k){return PLATFORM_COLORS[k];}),borderRadius:6}]},options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0,color:state.isDark?"#ccc":"#555"}},x:{ticks:{color:state.isDark?"#ccc":"#555"},grid:{display:false}}},responsive:true,maintainAspectRatio:false}});
 }
 
+// ============================================================
+// v4.4.0: PACE + HOUR BY HOUR
+// Same targets as the extension's Pace Timer (pace_core.js):
+//   Senior Analyst 20/hr (3:00 per case), Analyst 15/hr (4:00)
+//   New hires, from the Hire Date in team_assignments (column E), step up
+//   weekly. Each 30-day month has four weeks (days 1-7, 8-14, 15-21, 22-30):
+//     Month 1: 5, 6, 7, 8   Month 2: 10, 10, 11, 12   Month 3: 12, 13, 14, 15
+//   then their role's target. Keep PACE_RAMP_WEEKS in step with
+//   RAMP_WEEKS in the extension's pace_core.js.
+// Each case is judged against the target for the day it was worked.
+// green < 75% of target, yellow up to the target, red over.
+// Analysts only ever get their own cases from the server, so they only
+// ever see their own pace.
+// ============================================================
+function paceRoleFor(name){
+  var key = normName(name);
+  var role = state.analystRoleMap && state.analystRoleMap[key];
+  if (!role && state.myAssignment && state.user && normName(state.user.displayName) === key) role = state.myAssignment.role;
+  return role || "Analyst";
+}
+function paceHireFor(name){
+  var key = normName(name);
+  if (state.analystHireMap && state.analystHireMap[key]) return state.analystHireMap[key];
+  if (state.myAssignment && state.user && normName(state.user.displayName) === key) return state.myAssignment.hire_date || "";
+  return "";
+}
+function paceDayNumber(startYmd, ymd){
+  var p = function(s){ var a = String(s).split("-").map(Number); return Date.UTC(a[0], a[1]-1, a[2]); };
+  var a = p(startYmd), b = p(ymd);
+  if (!isFinite(a) || !isFinite(b)) return null;
+  return Math.floor((b - a) / 86400000) + 1;
+}
+var PACE_RAMP_WEEKS = [[5, 6, 7, 8], [10, 10, 11, 12], [12, 13, 14, 15]];
+function paceTargetSec(name, ymd){
+  var hire = paceHireFor(name);
+  if (hire && ymd) {
+    var day = paceDayNumber(hire, ymd);
+    if (day !== null && day <= 90) {
+      var d = Math.max(1, day);
+      var month = Math.min(3, Math.ceil(d / 30));
+      var week = Math.min(4, Math.ceil((d - 30 * (month - 1)) / 7));
+      return 3600 / PACE_RAMP_WEEKS[month - 1][week - 1];
+    }
+  }
+  return 3600 / (/senior/i.test(paceRoleFor(name)) ? 20 : 15);
+}
+// { secs, target, band } for a timed case, or null when it wasn't timed.
+function casePace(c){
+  if (!(typeof c.handle_seconds === "number" && c.handle_seconds > 0)) return null;
+  var target = paceTargetSec(c.analyst, c.date);
+  var r = c.handle_seconds / target;
+  return { secs: c.handle_seconds, target: target, band: r < 0.75 ? "green" : r <= 1 ? "yellow" : "red" };
+}
+function fmtClock(sec){ sec = Math.max(0, Math.round(sec)); return Math.floor(sec/60) + ":" + String(sec%60).padStart(2,"0"); }
+
+function renderCasePace(){
+  var body = document.getElementById("casePaceBody"); if (!body) return;
+  var cases = state.cases || [];
+  var g = { green:0, yellow:0, red:0 }, untimed = 0, byP = {};
+  cases.forEach(function(c){
+    var p = casePace(c);
+    if (!p) { untimed++; return; }
+    g[p.band]++;
+    var k = c.platform || "Other";
+    if (!byP[k]) byP[k] = { t:0, u:0, sum:0 };
+    byP[k].t++; byP[k].sum += p.secs; if (p.band !== "red") byP[k].u++;
+  });
+  var total = g.green + g.yellow + g.red;
+  if (!total) { body.innerHTML = '<div class="empty">No timed cases for this period</div>'; return; }
+  var pct = function(n){ return (n / total * 100) + "%"; };
+  var order = ["Kount","Zendesk","Vector Review","RADAR"];
+  var plats = Object.keys(byP).sort(function(a,b){ return (order.indexOf(a)+99*(order.indexOf(a)<0)) - (order.indexOf(b)+99*(order.indexOf(b)<0)); });
+  var html = '<div class="pace-sum"><span>Under target</span><strong>'+(g.green+g.yellow)+' <span style="font-size:.85rem;font-weight:400;color:var(--text-muted)">of '+total+' ('+Math.round((g.green+g.yellow)/total*100)+'%)</span></strong></div>'
+    + '<div class="pace-split">'+(g.green?'<span class="pace-g" style="width:'+pct(g.green)+'"></span>':'')+(g.yellow?'<span class="pace-y" style="width:'+pct(g.yellow)+'"></span>':'')+(g.red?'<span class="pace-r" style="width:'+pct(g.red)+'"></span>':'')+'</div>'
+    + '<div class="pace-legend"><span><i class="pace-g"></i>'+g.green+' well under</span><span><i class="pace-y"></i>'+g.yellow+' close</span><span><i class="pace-r"></i>'+g.red+' over</span></div>'
+    + '<table class="pace-table"><thead><tr><th>Platform</th><th class="n">Avg</th><th class="n">Under target</th></tr></thead><tbody>'
+    + plats.map(function(k){ var b = byP[k]; return '<tr><td>'+esc(k)+'</td><td class="n">'+fmtClock(b.sum/b.t)+'</td><td class="n">'+b.u+' of '+b.t+'</td></tr>'; }).join("")
+    + '</tbody></table>'
+    + (g.red ? '<button class="btn btn-outline btn-sm" type="button" style="margin-top:.8rem" onclick="showOverTargetCases()">Show the '+g.red+' over-target case'+(g.red===1?'':'s')+' in the Case Log</button>' : '')
+    + '<div class="pace-note">Targets: Analyst 4:00, Senior Analyst 3:00, new hires by their weekly ramp-up.'+(untimed ? ' '+untimed+' case'+(untimed===1?' wasn\'t':'s weren\'t')+' timed and '+(untimed===1?'isn\'t':'aren\'t')+' counted.' : '')+'</div>';
+  body.innerHTML = html;
+}
+
+function renderCaseHourly(){
+  var canvas = document.getElementById("caseHourChart"); if (!canvas) return;
+  var emptyEl = document.getElementById("caseHourEmpty");
+  var sub = document.getElementById("caseHourSub");
+  var cases = (state.cases || []).filter(function(c){ return c.solved_at && !isNaN(new Date(c.solved_at).getTime()); });
+  if (state.caseHourChart) { state.caseHourChart.destroy(); state.caseHourChart = null; }
+  if (!cases.length) { canvas.style.display = "none"; if (emptyEl) emptyEl.style.display = "block"; return; }
+  canvas.style.display = "block"; if (emptyEl) emptyEl.style.display = "none";
+  var days = {}; cases.forEach(function(c){ days[c.date] = 1; });
+  var nDays = Object.keys(days).length;
+  var order = ["Kount","Zendesk","Vector Review","RADAR"];
+  var counts = {}, minH = 23, maxH = 0;
+  cases.forEach(function(c){
+    var h = new Date(c.solved_at).getHours();
+    minH = Math.min(minH, h); maxH = Math.max(maxH, h);
+    var p = c.platform || "Other";
+    if (!counts[p]) counts[p] = {};
+    counts[p][h] = (counts[p][h] || 0) + 1;
+  });
+  var hours = []; for (var h = minH; h <= maxH; h++) hours.push(h);
+  var label = function(h){ return (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? " AM" : " PM"); };
+  var plats = Object.keys(counts).sort(function(a,b){ return (order.indexOf(a)<0?99:order.indexOf(a)) - (order.indexOf(b)<0?99:order.indexOf(b)); });
+  var datasets = plats.map(function(p){
+    return { label: p, backgroundColor: PLATFORM_COLORS[p] || "hsl(0,0%,60%)", borderRadius: 3,
+      data: hours.map(function(h){ var n = (counts[p][h] || 0) / nDays; return Math.round(n * 10) / 10; }) };
+  });
+  if (sub) sub.textContent = nDays > 1 ? ("average cases per hour across " + nDays + " days, your time zone") : "cases saved each hour, your time zone";
+  var tc = state.isDark ? "#ccc" : "#555";
+  state.caseHourChart = new Chart(canvas, { type: "bar", data: { labels: hours.map(label), datasets: datasets },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: plats.length > 1, labels: { color: tc, boxWidth: 10 } },
+        tooltip: { callbacks: { label: function(ctx){ return ctx.dataset.label + ": " + ctx.parsed.y + (nDays > 1 ? " avg" : ""); } } } },
+      scales: { x: { stacked: true, ticks: { color: tc }, grid: { display: false } },
+        y: { stacked: true, beginAtZero: true, ticks: { color: tc, precision: nDays > 1 ? undefined : 0 } } } } });
+}
+
+function toggleCaseOverTarget(force){
+  state.caseOverTargetOnly = typeof force === "boolean" ? force : !state.caseOverTargetOnly;
+  var b = document.getElementById("caseOverTargetBtn");
+  if (b) { b.classList.toggle("active-filter", state.caseOverTargetOnly); b.setAttribute("aria-pressed", String(!!state.caseOverTargetOnly)); }
+  renderCaseLog();
+}
+function showOverTargetCases(){
+  toggleCaseOverTarget(true);
+  var c = document.getElementById("caseLogContent");
+  if (c && !c.classList.contains("open")) toggleCollapsible("caseLog");
+  if (c) c.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function renderCaseAnalystTable() {
   var by={};
   state.cases.forEach(function(c){var k=c.analyst||"Unknown";if(!by[k])by[k]={count:0,d:[]};by[k].count++;if(typeof c.handle_seconds==="number"&&c.handle_seconds>0)by[k].d.push(c.handle_seconds);});
   var rows=Object.entries(by).map(function(kv){var info=kv[1];return{name:kv[0],count:info.count,avgSec:info.d.length?Math.round(info.d.reduce(function(a,b){return a+b;},0)/info.d.length):null};}).sort(function(a,b){return b.count-a.count;});
-  document.getElementById("caseAnalystTable").innerHTML=rows.length===0?'<div class="empty">No cases for this period</div>':rows.map(function(r){return '<div class="analyst-row"><span class="analyst-name">'+esc(r.name)+'</span><span class="case-stack"><span class="count">'+r.count+' case'+(r.count===1?"":"s")+'</span><span class="aht">AHT: '+fmtSeconds(r.avgSec)+'</span></span></div>';}).join("");
+  // v4.4.0: share of each analyst's timed cases at or under their pace target.
+  var paceBy={};
+  state.cases.forEach(function(c){var p=casePace(c);if(!p)return;var k=c.analyst||"Unknown";if(!paceBy[k])paceBy[k]={t:0,u:0};paceBy[k].t++;if(p.band!=="red")paceBy[k].u++;});
+  document.getElementById("caseAnalystTable").innerHTML=rows.length===0?'<div class="empty">No cases for this period</div>':rows.map(function(r){var pb=paceBy[r.name];var pct=pb&&pb.t?'<span class="pace-pct">'+Math.round(pb.u/pb.t*100)+'% under target</span>':'';return '<div class="analyst-row"><span class="analyst-name">'+esc(r.name)+'</span><span class="case-stack"><span class="count">'+r.count+' case'+(r.count===1?"":"s")+'</span><span class="aht">AHT: '+fmtSeconds(r.avgSec)+'</span>'+pct+'</span></div>';}).join("");
 }
 
 function renderCasePlatformFilterRow() {
@@ -1289,6 +1463,7 @@ function getFilteredCaseLogRows(){
   if (state.caseSourceFilter !== "all") filtered = filtered.filter(function(c){ return c.source === state.caseSourceFilter; });
   var q = (state.caseSearchQuery||"").trim().toLowerCase();
   if (q) filtered = filtered.filter(function(c){ return String(c.case_id||"").toLowerCase().indexOf(q)!==-1; });
+  if (state.caseOverTargetOnly) filtered = filtered.filter(function(c){ var p = casePace(c); return p && p.band === "red"; });
   return filtered;
 }
 
@@ -1356,6 +1531,11 @@ function fmtHandleTime(c){
 }
 function renderHandleTimeCell(c){
   var txt = fmtHandleTime(c);
+  // v4.4.0: over the pace target? show by how much.
+  var pace = casePace(c);
+  if (pace && pace.band === "red") {
+    return esc(txt) + ' <span class="pace-over" style="font-size:.75rem" data-tooltip="Pace target '+fmtClock(pace.target)+'">+'+fmtClock(pace.secs - pace.target)+'</span>';
+  }
   if (txt === "Bulk") {
     return '<span data-tooltip="No timer captured — most likely bulk-processed, though it can also mean the case was reviewed in a separate tab">Bulk</span>';
   }
