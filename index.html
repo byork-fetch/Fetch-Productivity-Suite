@@ -179,7 +179,7 @@ textarea{resize:vertical;min-height:80px;}
 .platform-filter-btn.active{color:#fff;border-color:transparent;background:var(--gradient-btn);}
 .platform-filter-btn.active[data-platform="all"]{background:var(--gradient-btn);}
 .platform-filter-btn.active[data-platform="Kount"]{background:hsl(220,80%,55%);}
-.platform-filter-btn.active[data-platform="Zendesk"]{background:hsl(160,55%,40%);}
+.platform-filter-btn.active[data-platform="Dispute Review"]{background:hsl(160,55%,40%);}
 .platform-filter-btn.active[data-platform="RADAR"]{background:hsl(45,90%,45%);}
 .platform-filter-btn.active[data-platform="Vector Review"]{background:hsl(275,60%,55%);}
 .team-section{margin-bottom:1.5rem;}
@@ -220,6 +220,18 @@ textarea{resize:vertical;min-height:80px;}
   50%{ box-shadow:0 0 0 3px var(--primary); }
 }
 .cases-loading-pulse{ animation:casesLoadingPulse 1.1s ease-in-out infinite; }
+.wow-head{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;justify-content:space-between;margin-bottom:1rem}
+.wow-note{font-size:.8rem;color:var(--text-muted);margin:0}
+.wow-toggle{display:flex;gap:.4rem}
+.wow-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:1.25rem;align-items:start}
+@media (max-width:900px){.wow-grid{grid-template-columns:1fr}}
+.wow-table{min-width:0}
+.wow-table td.n,.wow-table th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wow-table tr.wow-group td{font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);padding-top:.9rem}
+.wow-up{color:hsl(142,60%,38%);font-weight:700}
+.wow-down{color:hsl(0,65%,50%);font-weight:700}
+.wow-flat{color:var(--text-muted)}
+.wow-chart-title{font-size:.8rem;font-weight:600;color:var(--text-muted);margin-bottom:.4rem}
 </style>
 </head>
 <body>
@@ -314,6 +326,22 @@ textarea{resize:vertical;min-height:80px;}
         <div class="card">
           <div class="card-header"><h2>Pace</h2><p class="pace-card-sub" id="casePaceSub">timed cases against the pace target</p></div>
           <div class="card-body" id="casePaceBody"><div class="empty">No cases yet</div></div>
+        </div>
+      </div>
+      <div class="collapsible" id="wowSection">
+        <button class="collapsible-trigger" onclick="toggleWowSection()"><span>📊 This Week vs Last Week</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="collapsible-content" id="wowContent">
+          <div class="wow-head">
+            <p class="wow-note" id="wowNote">Compares this week so far with the same days last week.</p>
+            <div class="wow-toggle" role="group" aria-label="Compare with">
+              <button type="button" class="platform-filter-btn active" data-wow="same" onclick="setWowMode('same')">Same days</button>
+              <button type="button" class="platform-filter-btn" data-wow="full" onclick="setWowMode('full')">Full last week</button>
+            </div>
+          </div>
+          <div class="wow-grid">
+            <div class="table-wrap"><table class="wow-table"><thead><tr><th>Metric</th><th class="n">Last week</th><th class="n">This week</th><th class="n">Change</th></tr></thead><tbody id="wowBody"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody></table></div>
+            <div><div class="wow-chart-title">Cases by day</div><div class="chart-wrap" style="height:240px"><canvas id="wowChart"></canvas></div></div>
+          </div>
         </div>
       </div>
       <div class="collapsible" id="trendsSection" data-supervisor-only="1">
@@ -560,6 +588,14 @@ function handleAuthResult(json){
   return json;
 }
 
+// v4.4.1: the Cases sheet stores Dispute Review cases with platform "Zendesk"
+// (its name from before Vector Review moved into Zendesk too). The sheet and
+// history stay as they are; the dashboard shows them as "Dispute Review".
+function normCasePlatforms(arr){
+  (arr||[]).forEach(function(c){ if (c && c.platform === "Zendesk") c.platform = "Dispute Review"; });
+  return arr || [];
+}
+
 function apiGet(action, params) {
   var url = EXEC_URL + "?action=" + encodeURIComponent(action) + "&secret=" + encodeURIComponent(DASH_SECRET);
   if (Date.now() < _freshUntil) url += "&fresh=1";
@@ -699,10 +735,10 @@ function loadFilterPrefs(){
     var raw = localStorage.getItem(FILTER_PREFS_KEY);
     if (!raw) return;
     var p = JSON.parse(raw);
-    if (p.periodMode && ["today","yesterday","week","30d","60d","90d","custom"].indexOf(p.periodMode)!==-1) state.periodMode = p.periodMode;
+    if (p.periodMode && ["today","yesterday","week","lastweek","30d","60d","90d","custom"].indexOf(p.periodMode)!==-1) state.periodMode = p.periodMode;
     if (p.periodCustomStart) state.periodCustomStart = p.periodCustomStart;
     if (p.periodCustomEnd) state.periodCustomEnd = p.periodCustomEnd;
-    if (p.casePlatformFilter) state.casePlatformFilter = p.casePlatformFilter;
+    if (p.casePlatformFilter) state.casePlatformFilter = (p.casePlatformFilter === "Zendesk" ? "Dispute Review" : p.casePlatformFilter);
     if (p.caseSourceFilter) state.caseSourceFilter = p.caseSourceFilter;
     if (p.caseLogAnalystFilter) state.caseLogAnalystFilter = p.caseLogAnalystFilter;
     if (p.caseSearchQuery) state.caseSearchQuery = p.caseSearchQuery;
@@ -933,6 +969,7 @@ function getPeriodBounds() {
   if (state.periodMode === "today")     { var d=formatDate(now); return { start:d, end:d }; }
   if (state.periodMode === "yesterday") { var y=new Date(now.getTime()-86400000); var d=formatDate(y); return { start:d, end:d }; }
   if (state.periodMode === "week")      { return { start:formatDate(getWeekStart(now)), end:formatDate(getWeekEnd(now)) }; }
+  if (state.periodMode === "lastweek")  { var lw=lastWeekBounds(now); return { start:lw.start, end:lw.end }; }
   if (state.periodMode === "30d") { return { start:formatDate(new Date(now.getTime()-29*86400000)), end:formatDate(now) }; }
   if (state.periodMode === "60d") { return { start:formatDate(new Date(now.getTime()-59*86400000)), end:formatDate(now) }; }
   if (state.periodMode === "90d") { return { start:formatDate(new Date(now.getTime()-89*86400000)), end:formatDate(now) }; }
@@ -946,6 +983,7 @@ function periodLabel() {
   if (state.periodMode === "today")     return "Today · " + rangeStr;
   if (state.periodMode === "yesterday") return "Yesterday · " + rangeStr;
   if (state.periodMode === "week")      return "This Week · " + rangeStr;
+  if (state.periodMode === "lastweek")  return "Last Week · " + rangeStr;
   if (state.periodMode === "30d")       return "Last 30 Days · " + rangeStr;
   if (state.periodMode === "60d")       return "Last 60 Days · " + rangeStr;
   if (state.periodMode === "90d")       return "Last 90 Days · " + rangeStr;
@@ -961,7 +999,7 @@ function getPriorPeriodBounds(bounds) {
 }
 
 function renderPeriodControls() {
-  var opts = [["today","Today"],["yesterday","Yesterday"],["week","This Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
+  var opts = [["today","Today"],["yesterday","Yesterday"],["week","This Week"],["lastweek","Last Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
   var html = opts.map(function(o){
     var disabledAttr = state.periodLoading ? ' disabled' : '';
     return '<button class="platform-filter-btn'+(state.periodMode===o[0]?' active':'')+'"'+disabledAttr+' onclick="setPeriod(\''+o[0]+'\')">'+o[1]+'</button>';
@@ -1033,6 +1071,8 @@ function setDashboardLoadingVisual(loading) {
 }
 
 function fetchDashboardData() {
+  // This Week vs Last Week has its own range; refresh it alongside.
+  if (state.wow) { state.wow.loaded = false; var wc = document.getElementById('wowContent'); if (wc && wc.classList.contains('open')) loadWowData(); }
   var b = getPeriodBounds();
   var pb = getPriorPeriodBounds(b);
   state.periodLoading = true;
@@ -1044,8 +1084,8 @@ function fetchDashboardData() {
     console.log("[Dashboard] getDashboardData took "+((Date.now()-_t0)/1000).toFixed(1)+"s", result&&result.error?("ERROR: "+result.error):("entries="+((result&&result.entries)||[]).length+", cases="+((result&&result.cases)||[]).length), result&&result._timing?("server: "+JSON.stringify(result._timing)):"");
     if(result&&result.error){ throw new Error(result.error); }
     state.allRangeEntries=(result&&!result.error&&Array.isArray(result.entries))?result.entries:[];
-    state.allRangeCases=(result&&!result.error&&Array.isArray(result.cases))?result.cases:[];
-    state.allPriorRangeCases=(result&&!result.error&&Array.isArray(result.priorCases))?result.priorCases:[];
+    state.allRangeCases=normCasePlatforms((result&&!result.error&&Array.isArray(result.cases))?result.cases:[]);
+    state.allPriorRangeCases=normCasePlatforms((result&&!result.error&&Array.isArray(result.priorCases))?result.priorCases:[]);
     document.getElementById("periodDesc").textContent = "Showing data for " + periodLabel();
     state.periodLoading = false;
     renderPeriodControls();
@@ -1115,8 +1155,117 @@ function applyCaseFilter() {
   updateCaseLogAnalystFilterOptions();
   renderCasePlatformFilterRow(); // v4.3.9: RADAR button depends on the range
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
+  if (state.wow && state.wow.loaded) renderWow();
   renderCaseHourly(); renderCasePace(); // v4.4.0
   if (state.trendsLoaded) loadTrendsData();
+}
+
+// ============================================================
+// v4.4.1: THIS WEEK VS LAST WEEK
+// One extra request (last Sunday-to-today range) the first time the
+// section is opened, then re-scoped locally whenever the analyst / team /
+// role filters change. "Same days" compares this week so far with the
+// same weekdays last week (Sun-Wed vs Sun-Wed on a Wednesday), so a
+// half-finished week isn't measured against a full one.
+// ============================================================
+state.wow = { loaded:false, loading:false, mode:"same", entries:[], cases:[], chart:null };
+
+function toggleWowSection(){
+  toggleCollapsible('wow');
+  var c = document.getElementById('wowContent');
+  if (c && c.classList.contains('open')) { if (!state.wow.loaded) loadWowData(); else renderWow(); }
+}
+function setWowMode(mode){
+  state.wow.mode = mode;
+  document.querySelectorAll('[data-wow]').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-wow') === mode); });
+  renderWow();
+}
+function wowRanges(){
+  var now = new Date(), tw = getWeekStart(now), lw = new Date(tw); lw.setDate(tw.getDate()-7);
+  var dayIdx = now.getDay(); // 0 = Sunday
+  var lwEnd = new Date(lw); lwEnd.setDate(lw.getDate() + (state.wow.mode === "same" ? dayIdx : 6));
+  return { thisStart: formatDate(tw), thisEnd: formatDate(now), lastStart: formatDate(lw), lastEnd: formatDate(lwEnd), dayIdx: dayIdx, lastFullEnd: formatDate(new Date(lw.getFullYear(), lw.getMonth(), lw.getDate()+6)) };
+}
+function loadWowData(){
+  if (state.wow.loading) return;
+  state.wow.loading = true;
+  var r = wowRanges();
+  var body = document.getElementById('wowBody'); if (body) body.innerHTML = '<tr><td colspan="4" class="empty">Loading…</td></tr>';
+  apiGet("getDashboardData",{start:r.lastStart,end:r.thisEnd,priorStart:r.lastStart,priorEnd:r.lastStart}).then(function(res){
+    if (res && res.error) throw new Error(res.error);
+    state.wow.entries = (res && Array.isArray(res.entries)) ? res.entries : [];
+    state.wow.cases = normCasePlatforms((res && Array.isArray(res.cases)) ? res.cases : []);
+    state.wow.loaded = true;
+  }).catch(function(err){
+    if (body) body.innerHTML = '<tr><td colspan="4" class="empty">Couldn\'t load this comparison. Try 🔄 again.</td></tr>';
+    console.error("[WoW] load failed:", err);
+  }).then(function(){ state.wow.loading = false; if (state.wow.loaded) renderWow(); });
+}
+function wowChange(cur, prev, kind, betterWhen){
+  // kind: "count" | "secs" | "pct"; betterWhen: "up" | "down" | null (neutral)
+  if (cur == null || prev == null) return '<span class="wow-flat">–</span>';
+  var diff = cur - prev;
+  if (Math.abs(diff) < (kind === "secs" ? 1 : kind === "pct" ? 0.5 : 0.0001)) return '<span class="wow-flat">no change</span>';
+  var arrow = diff > 0 ? "▲" : "▼";
+  var txt;
+  if (kind === "pct") txt = Math.abs(Math.round(diff)) + " pts";
+  else if (kind === "secs") txt = (prev > 0 ? Math.abs(Math.round(diff/prev*100)) + "%" : fmtSeconds(Math.abs(diff)));
+  else txt = (prev > 0 ? Math.abs(Math.round(diff/prev*100)) + "%" : "+" + Math.round(diff));
+  var cls = "wow-flat";
+  if (betterWhen) cls = ((diff > 0) === (betterWhen === "up")) ? "wow-up" : "wow-down";
+  return '<span class="' + cls + '">' + arrow + ' ' + txt + '</span>';
+}
+function renderWow(){
+  var body = document.getElementById('wowBody'); if (!body || !state.wow.loaded) return;
+  var r = wowRanges();
+  var note = document.getElementById('wowNote');
+  var dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  if (note) note.textContent = state.wow.mode === "same"
+    ? "This week so far (" + formatDateRangeDisplay(r.thisStart, r.thisEnd) + ") vs the same days last week (" + formatDateRangeDisplay(r.lastStart, r.lastEnd) + "), Sunday through " + dayNames[r.dayIdx] + "."
+    : "This week so far (" + formatDateRangeDisplay(r.thisStart, r.thisEnd) + ") vs all of last week (" + formatDateRangeDisplay(r.lastStart, r.lastFullEnd) + ").";
+  var ents = scopeEntriesForCurrentUser(state.wow.entries), cs = filterCasesForCurrentScope(state.wow.cases);
+  var inR = function(d, a, b){ return d >= a && d <= b; };
+  var T = { e: ents.filter(function(x){ return inR(x.date, r.thisStart, r.thisEnd); }), c: cs.filter(function(x){ return inR(x.date, r.thisStart, r.thisEnd); }) };
+  var L = { e: ents.filter(function(x){ return inR(x.date, r.lastStart, r.lastEnd); }), c: cs.filter(function(x){ return inR(x.date, r.lastStart, r.lastEnd); }) };
+  function plat(c, p){ return c.filter(function(x){ return x.platform === p; }); }
+  function underPct(c){ var t = 0, u = 0; c.forEach(function(x){ var pc = casePace(x); if (!pc) return; t++; if (pc.band !== "red") u++; }); return t ? Math.round(u/t*100) : null; }
+  function days(c){ return new Set(c.map(function(x){ return x.date; })).size; }
+  var uT = calcUtilizationDetail(T.e), uL = calcUtilizationDetail(L.e);
+  var rows = [];
+  function group(t){ rows.push('<tr class="wow-group"><td colspan="4">' + t + '</td></tr>'); }
+  function row(label, prev, cur, fmt, kind, better){ rows.push('<tr><td>' + label + '</td><td class="n">' + fmt(prev) + '</td><td class="n">' + fmt(cur) + '</td><td class="n">' + wowChange(cur, prev, kind, better) + '</td></tr>'); }
+  var n = function(v){ return v == null ? "–" : String(v); };
+  var sec = function(v){ return v == null ? "—" : fmtSeconds(v); };
+  var pct = function(v){ return v == null ? "–" : v + "%"; };
+  var dur = function(v){ return v == null ? "–" : fmtDurationShort(v); };
+  // Against a full last week, this week's totals are naturally lower until
+  // it ends, so totals are shown without good/bad coloring in that mode.
+  var totalsBetter = state.wow.mode === "same" ? "up" : null;
+  group("Cases");
+  row("All cases", L.c.length, T.c.length, n, "count", totalsBetter);
+  ["Kount","Dispute Review","Vector Review"].forEach(function(p){ row(p, plat(L.c,p).length, plat(T.c,p).length, n, "count", totalsBetter); });
+  var dT = days(T.c), dL = days(L.c);
+  row("Cases per day worked", dL ? Math.round(L.c.length/dL) : null, dT ? Math.round(T.c.length/dT) : null, n, "count", "up");
+  group("Handle time (AHT)");
+  ["Kount","Dispute Review","Vector Review"].forEach(function(p){ row(p, ahtFromCases(plat(L.c,p)).avgSec, ahtFromCases(plat(T.c,p)).avgSec, sec, "secs", "down"); });
+  row("Under pace target", underPct(L.c), underPct(T.c), pct, "pct", "up");
+  group("Time");
+  row("Utilization", uL.totalSecs ? uL.util : null, uT.totalSecs ? uT.util : null, pct, "pct", "up");
+  row("Queue time", uL.queueSecs, uT.queueSecs, dur, "count", null);
+  row("Logged time", sum(L.e,"duration"), sum(T.e,"duration"), dur, "count", null);
+  row("Untracked time", uL.untrackedSecs, uT.untrackedSecs, dur, "count", state.wow.mode === "same" ? "down" : null);
+  body.innerHTML = rows.join("");
+  // Cases by day, Sunday to Saturday
+  var canvas = document.getElementById('wowChart'); if (!canvas || typeof Chart === "undefined") return;
+  var short = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  var lastFull = cs.filter(function(x){ return inR(x.date, r.lastStart, r.lastFullEnd); });
+  function perDay(list, start){ var out = [0,0,0,0,0,0,0], s0 = new Date(start + "T00:00:00"); list.forEach(function(x){ var i = Math.round((new Date(x.date + "T00:00:00") - s0)/86400000); if (i >= 0 && i < 7) out[i]++; }); return out; }
+  var lastArr = perDay(lastFull, r.lastStart), thisArr = perDay(T.c, r.thisStart).map(function(v, i){ return i <= r.dayIdx ? v : null; });
+  if (state.wow.chart) { state.wow.chart.destroy(); state.wow.chart = null; }
+  state.wow.chart = new Chart(canvas, { type: "bar", data: { labels: short, datasets: [
+    { label: "Last week", data: lastArr, backgroundColor: "hsla(260,25%,60%,.45)", borderRadius: 4 },
+    { label: "This week", data: thisArr, backgroundColor: "hsl(275,60%,55%)", borderRadius: 4 } ] },
+    options: { maintainAspectRatio: false, plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } } });
 }
 
 function toggleTrendsSection(){
@@ -1230,10 +1379,10 @@ function deltaBadge(curVal, priorVal, lowerIsBetter) {
 function renderCaseStats() {
   var inRange=state.cases;
   var prior=state.priorCases||[];
-  var kc=inRange.filter(function(c){return c.platform==='Kount';}), zc=inRange.filter(function(c){return c.platform==='Zendesk';}), rc=inRange.filter(function(c){return c.platform==='RADAR';}), vc=inRange.filter(function(c){return c.platform==='Vector Review';});
+  var kc=inRange.filter(function(c){return c.platform==='Kount';}), zc=inRange.filter(function(c){return c.platform==='Dispute Review';}), rc=inRange.filter(function(c){return c.platform==='RADAR';}), vc=inRange.filter(function(c){return c.platform==='Vector Review';});
   var ka=ahtFromCases(kc), za=ahtFromCases(zc), ra=ahtFromCases(rc), va=ahtFromCases(vc);
   var pka=ahtFromCases(prior.filter(function(c){return c.platform==='Kount';}));
-  var pza=ahtFromCases(prior.filter(function(c){return c.platform==='Zendesk';}));
+  var pza=ahtFromCases(prior.filter(function(c){return c.platform==='Dispute Review';}));
   var pra=ahtFromCases(prior.filter(function(c){return c.platform==='RADAR';}));
   var pva=ahtFromCases(prior.filter(function(c){return c.platform==='Vector Review';}));
   function bulkCount(cases){ return cases.filter(function(c){ return c.timing_method==="bulk" && !(c.handle_seconds>0); }).length; }
@@ -1245,9 +1394,9 @@ function renderCaseStats() {
     return parts.join(" · ");
   }
   var cards=[
-    {label:"Cases ("+periodLabel()+")",value:String(inRange.length)+deltaBadge(inRange.length,prior.length,null),sub:"Kount "+kc.length+" · Zendesk "+zc.length+(rc.length?" · RADAR "+rc.length:"")+(vc.length?" · Vector Review "+vc.length:"")+" · vs. prior period: "+prior.length},
+    {label:"Cases ("+periodLabel()+")",value:String(inRange.length)+deltaBadge(inRange.length,prior.length,null),sub:"Kount "+kc.length+" · Dispute Review "+zc.length+(rc.length?" · RADAR "+rc.length:"")+(vc.length?" · Vector Review "+vc.length:"")+" · vs. prior period: "+prior.length},
     {label:"Kount AHT",value:fmtSeconds(ka.avgSec)+deltaBadge(ka.avgSec,pka.avgSec,true),sub:ahtSub(ka,kBulk)},
-    {label:"Zendesk AHT",value:fmtSeconds(za.avgSec)+deltaBadge(za.avgSec,pza.avgSec,true),sub:ahtSub(za,zBulk)},
+    {label:"Dispute Review AHT",value:fmtSeconds(za.avgSec)+deltaBadge(za.avgSec,pza.avgSec,true),sub:ahtSub(za,zBulk)},
     {label:"Vector Review AHT",value:fmtSeconds(va.avgSec)+deltaBadge(va.avgSec,pva.avgSec,true),sub:ahtSub(va,0)}
   ];
   // v4.3.9: RADAR is retired. Its AHT card only appears for date ranges
@@ -1260,7 +1409,7 @@ function renderCaseStats() {
 function renderCaseChart() {
   var canvas=document.getElementById("caseChart"); if(!canvas)return;
   var emptyEl=document.getElementById("caseChartEmpty");
-  var counts={Kount:0,Zendesk:0,RADAR:0,"Vector Review":0};
+  var counts={Kount:0,"Dispute Review":0,RADAR:0,"Vector Review":0};
   state.cases.forEach(function(c){if(counts[c.platform]!==undefined)counts[c.platform]++;});
   // v4.3.9: RADAR bar only when the range has RADAR cases (historical).
   if (!counts.RADAR) delete counts.RADAR;
@@ -1346,7 +1495,7 @@ function renderCasePace(){
   var total = g.green + g.yellow + g.red;
   if (!total) { body.innerHTML = '<div class="empty">No timed cases for this period</div>'; return; }
   var pct = function(n){ return (n / total * 100) + "%"; };
-  var order = ["Kount","Zendesk","Vector Review","RADAR"];
+  var order = ["Kount","Dispute Review","Vector Review","RADAR"];
   var plats = Object.keys(byP).sort(function(a,b){ return (order.indexOf(a)+99*(order.indexOf(a)<0)) - (order.indexOf(b)+99*(order.indexOf(b)<0)); });
   var html = '<div class="pace-sum"><span>Under target</span><strong>'+(g.green+g.yellow)+' <span style="font-size:.85rem;font-weight:400;color:var(--text-muted)">of '+total+' ('+Math.round((g.green+g.yellow)/total*100)+'%)</span></strong></div>'
     + '<div class="pace-split">'+(g.green?'<span class="pace-g" style="width:'+pct(g.green)+'"></span>':'')+(g.yellow?'<span class="pace-y" style="width:'+pct(g.yellow)+'"></span>':'')+(g.red?'<span class="pace-r" style="width:'+pct(g.red)+'"></span>':'')+'</div>'
@@ -1369,7 +1518,7 @@ function renderCaseHourly(){
   canvas.style.display = "block"; if (emptyEl) emptyEl.style.display = "none";
   var days = {}; cases.forEach(function(c){ days[c.date] = 1; });
   var nDays = Object.keys(days).length;
-  var order = ["Kount","Zendesk","Vector Review","RADAR"];
+  var order = ["Kount","Dispute Review","Vector Review","RADAR"];
   var counts = {}, minH = 23, maxH = 0;
   cases.forEach(function(c){
     var h = new Date(c.solved_at).getHours();
@@ -1419,7 +1568,7 @@ function renderCaseAnalystTable() {
 }
 
 function renderCasePlatformFilterRow() {
-  var opts = [["all","All"],["Kount","Kount"],["Zendesk","Zendesk"],["Vector Review","Vector Review"]];
+  var opts = [["all","All"],["Kount","Kount"],["Dispute Review","Dispute Review"],["Vector Review","Vector Review"]];
   // v4.3.9: RADAR filter only shows when the range has RADAR cases (or it's
   // the filter already picked, so it can be switched off).
   if ((state.cases||[]).some(function(c){return c.platform==='RADAR';}) || state.casePlatformFilter==='RADAR') opts.splice(3,0,["RADAR","RADAR"]);
@@ -1439,7 +1588,7 @@ function setCasePlatformFilter(platform) {
 
 function computeCaseOutlierFlags(cases) {
   var flags = {};
-  ["Kount","Zendesk","RADAR","Vector Review"].forEach(function(platform){
+  ["Kount","Dispute Review","RADAR","Vector Review"].forEach(function(platform){
     var timed = cases.filter(function(c){ return c.platform===platform && typeof c.handle_seconds==="number" && c.handle_seconds>0; });
     if (timed.length < 5) return;
     var mean = timed.reduce(function(a,c){return a+c.handle_seconds;},0)/timed.length;
@@ -1474,7 +1623,7 @@ function getFilteredCaseLogRows(){
 // ============================================================
 var CASE_LINK_TEMPLATES = {
   Kount:   "https://app.kount.com/case-management/case-queue/order/{ID}",
-  Zendesk: "https://shopfetch.zendesk.com/agent/tickets/{ID}",
+  "Dispute Review": "https://shopfetch.zendesk.com/agent/tickets/{ID}",
   RADAR:   "https://support-dashboard.fetchrewards.com/fraud/{ID}",
   "Vector Review": "https://shopfetch.zendesk.com/agent/tickets/{ID}"
 };
@@ -1483,7 +1632,7 @@ function caseUrl(platform, id) {
   // Vector Review tickets record as their own platform from v4.3.6. A
   // numeric RADAR id is a Zendesk ticket from 4.3.5 testing, so it links
   // to Zendesk too; RADAR's own ids are long hex user ids.
-  var t = (platform === "RADAR" && /^\d+$/.test(id)) ? CASE_LINK_TEMPLATES.Zendesk : CASE_LINK_TEMPLATES[platform];
+  var t = (platform === "RADAR" && /^\d+$/.test(id)) ? CASE_LINK_TEMPLATES["Dispute Review"] : CASE_LINK_TEMPLATES[platform];
   if (!t || !id || /-\d+$/.test(id) && !/^\d+$/.test(id)) return "";
   return t.replace("{ID}", encodeURIComponent(id));
 }
@@ -1498,7 +1647,7 @@ function renderCaseLog() {
   var sorted=filtered.slice().sort(function(a,b){var f=state.caseSortField,dir=state.caseSortDir==="asc"?1:-1,av=a[f],bv=b[f];if(typeof av==="number"||typeof bv==="number")return((av||0)-(bv||0))*dir;return String(av||"").localeCompare(String(bv||""))*dir;});
   var outliers = computeCaseOutlierFlags(state.cases);
   document.getElementById("caseLogBody").innerHTML=sorted.length===0?'<tr><td colspan="6" class="empty">No cases match filters</td></tr>':sorted.map(function(c){
-    var pc=c.platform==='Kount'?'badge-kount':c.platform==='Zendesk'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':c.platform==='Vector Review'?'badge-vector':'';
+    var pc=c.platform==='Kount'?'badge-kount':c.platform==='Dispute Review'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':c.platform==='Vector Review'?'badge-vector':'';
     var flag = outliers[c.platform+"|"+c.case_id+"|"+c.date];
     var flagBadge = "";
     if (flag) {
@@ -1748,7 +1897,7 @@ function saveEdit(){
 // rule as the edit pencil). Code.gs re-checks this against callerEmail.
 // ============================================================
 var ADD_ENTRY_ACTIVITIES = [
-  "Dispute Review","Rules Review","Vector Review","CF Audit","Lattice","Udemy","Medallia",
+  "Dispute Review","Rules Review","Vector Review","CF Audit","Lattice","Udemy","Medallia","Productivity Suite Dashboard",
   "AI/Innovation","Break (15 min)","Catching Up","Equipment Issue","Inclusion Calendar Programs",
   "Lunch","Meeting","Senior Sync Prep","SFA Escalations","SFA Questions","Team & Project Initiatives",
   "Training","Transaction Transformer Audit","Wellness"
@@ -1885,7 +2034,7 @@ function saveAddEntry(){
 // (and the Apply button) instead of computing a range itself; every other
 // pill fills them in and reloads immediately.
 function renderTeamPeriodControls() {
-  var opts = [["today","Today"],["yesterday","Yesterday"],["week","This Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
+  var opts = [["today","Today"],["yesterday","Yesterday"],["week","This Week"],["lastweek","Last Week"],["30d","30 Days"],["60d","60 Days"],["90d","90 Days"],["custom","Custom"]];
   var html = opts.map(function(o){
     return '<button class="platform-filter-btn'+(state.teamPeriodMode===o[0]?' active':'')+'" onclick="setTeamPeriod(\''+o[0]+'\')">'+o[1]+'</button>';
   }).join("");
@@ -1909,6 +2058,10 @@ function setTeamPeriod(mode) {
     start = getWeekStart(now);
     end = getWeekEnd(now);
     if (end > now) end = now;
+  } else if (mode === "lastweek") {
+    var lw = lastWeekBounds(now);
+    start = new Date(lw.start + "T00:00:00");
+    end = new Date(lw.end + "T00:00:00");
   } else {
     var days = parseInt(mode, 10) || 30;
     start = new Date(now.getTime() - (days - 1) * 86400000);
@@ -1933,7 +2086,7 @@ function loadTeamData(){
     (Array.isArray(reviewed)?reviewed:[]).forEach(function(k){ state.reviewedFlagKeys[k]=true; });
     state.archivedFlags = (isAdminUser() && Array.isArray(archived)) ? archived : [];
     state.attentionSelectedKeys = {};
-    state.teamData=data;if(!state.teamData.cases)state.teamData.cases=[];
+    state.teamData=data;state.teamData.cases=normCasePlatforms(state.teamData.cases||[]);
     var analysts=[...new Set(data.entries.map(function(e){return e.analyst;}))].sort();
     var tasks=[...new Set(data.entries.map(function(e){return e.task;}))].sort();
     var ae=document.getElementById("exportAnalyst");ae.innerHTML='<option value="all">All Analysts</option>';analysts.forEach(function(a){ae.innerHTML+='<option value="'+esc(a)+'">'+esc(a)+'</option>';});
@@ -2054,7 +2207,7 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
     }
   });
 
-  ["Kount","Zendesk","RADAR","Vector Review"].forEach(function(platform){
+  ["Kount","Dispute Review","RADAR","Vector Review"].forEach(function(platform){
     var teamTimed = cases.filter(function(c){ return c.platform===platform && typeof c.handle_seconds==="number" && c.handle_seconds>0; });
     if (teamTimed.length < 5) return;
     var teamAvg = teamTimed.reduce(function(a,c){return a+c.handle_seconds;},0)/teamTimed.length;
@@ -2065,7 +2218,7 @@ function computeAttentionFlags(assignments, allEntries, allCases) {
       if (arr.length < 3) return;
       var avg = arr.reduce(function(a,b){return a+b;},0)/arr.length;
       if (avg > teamAvg*1.5) {
-        flags.push({ analyst:name, message:platform+" AHT ("+fmtSeconds(avg)+") is well above the team average ("+fmtSeconds(teamAvg)+")", key:"aht:"+name+":"+platform });
+        flags.push({ analyst:name, message:platform+" AHT ("+fmtSeconds(avg)+") is well above the team average ("+fmtSeconds(teamAvg)+")", key:"aht:"+name+":"+(platform==="Dispute Review"?"Zendesk":platform) });
       }
     });
   });
@@ -2350,13 +2503,13 @@ function sortTeamMembers(groups){
   });
 }
 
-var PLATFORM_TASK_MAP = { Kount: "Rules Review", Zendesk: "Dispute Review", RADAR: "RADAR", "Vector Review": "Vector Review" };
-var PLATFORM_COLORS   = { Kount: "hsl(220,80%,55%)", Zendesk: "hsl(160,55%,40%)", RADAR: "hsl(45,90%,45%)", "Vector Review": "hsl(275,60%,55%)" };
+var PLATFORM_TASK_MAP = { Kount: "Rules Review", "Dispute Review": "Dispute Review", RADAR: "RADAR", "Vector Review": "Vector Review" };
+var PLATFORM_COLORS   = { Kount: "hsl(220,80%,55%)", "Dispute Review": "hsl(160,55%,40%)", RADAR: "hsl(45,90%,45%)", "Vector Review": "hsl(275,60%,55%)" };
 
 function platformBreakdown(entries, cases) {
   // v4.3.9: RADAR card only when this range has RADAR time or cases.
   var hasRadar = cases.some(function(c){ return c.platform === "RADAR"; }) || entries.some(function(e){ return e.task === "RADAR"; });
-  return ["Kount","Zendesk"].concat(hasRadar ? ["RADAR"] : [], ["Vector Review"]).map(function(platform){
+  return ["Kount","Dispute Review"].concat(hasRadar ? ["RADAR"] : [], ["Vector Review"]).map(function(platform){
     var taskName  = PLATFORM_TASK_MAP[platform];
     var timeSecs  = sum(entries.filter(function(e){ return e.task === taskName; }), "duration");
     var platCases = cases.filter(function(c){ return c.platform === platform; });
@@ -2408,7 +2561,7 @@ function renderQuickViewTable() {
     cases.sort(function(a,b){ return b.date.localeCompare(a.date); });
     head = '<tr><th>Date</th><th>Analyst</th><th>Platform</th><th>Case ID</th><th>Source</th><th style="text-align:right">Handle Time</th></tr>';
     body = cases.length===0 ? '<tr><td colspan="6" class="empty">No cases match filters</td></tr>' : cases.map(function(c){
-      var pc = c.platform==='Kount'?'badge-kount':c.platform==='Zendesk'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':c.platform==='Vector Review'?'badge-vector':'';
+      var pc = c.platform==='Kount'?'badge-kount':c.platform==='Dispute Review'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':c.platform==='Vector Review'?'badge-vector':'';
       return '<tr><td>'+esc(c.date)+'</td><td><span class="badge">'+esc(c.analyst)+'</span></td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+caseIdHtml(c.platform, c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+'</td></tr>';
     }).join("");
     document.getElementById("quickViewMeta").textContent=(state.quickViewAnalyst?state.quickViewAnalyst+" · ":"")+cases.length+" case"+(cases.length===1?"":"s");
@@ -2707,6 +2860,8 @@ function fmtDateTime(iso){if(!iso)return"";return new Date(iso).toLocaleString("
 function sum(arr,key){return arr.reduce(function(a,e){return a+(Number(e[key])||0);},0);}
 function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 function getWeekStart(d){var s=new Date(d);s.setDate(d.getDate()-d.getDay());s.setHours(0,0,0,0);return s;}
+// v4.4.1: last full week, Sunday to Saturday (weeks start on Sunday here).
+function lastWeekBounds(now){var s=getWeekStart(now);s.setDate(s.getDate()-7);var e=new Date(s);e.setDate(s.getDate()+6);return{start:formatDate(s),end:formatDate(e)};}
 function getWeekEnd(d){var e=new Date(d);e.setDate(d.getDate()+(6-d.getDay()));e.setHours(23,59,59,999);return e;}
 function toast(type,msg){var c=document.getElementById("toast-container"),t=document.createElement("div");t.className="toast "+type;t.textContent=msg;c.appendChild(t);setTimeout(function(){t.remove();},4000);}
 </script>
