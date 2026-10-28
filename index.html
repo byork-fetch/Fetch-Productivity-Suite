@@ -232,6 +232,26 @@ textarea{resize:vertical;min-height:80px;}
 .wow-down{color:hsl(0,65%,50%);font-weight:700}
 .wow-flat{color:var(--text-muted)}
 .wow-chart-title{font-size:.8rem;font-weight:600;color:var(--text-muted);margin-bottom:.4rem}
+.role-aht-tile{text-align:left;font:inherit;color:var(--text);display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;}
+.role-aht-btn{cursor:pointer;}
+.role-aht-btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
+.role-aht-pair{display:flex;gap:.9rem;align-items:flex-end;}
+.role-aht-num{font-size:1.25rem;font-weight:700;line-height:1.15;background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;white-space:nowrap;}
+.role-aht-who{display:flex;align-items:center;gap:.3rem;font-size:.7rem;color:var(--text-muted);margin-top:.1rem;}
+.role-aht-who i,.role-aht-dot{display:inline-block;width:8px;height:8px;border-radius:2px;}
+.role-aht-dot{margin:0 .2rem 0 .1rem;}
+.role-aht-cue{color:hsl(265,55%,48%);font-weight:600;white-space:nowrap;}
+.dark .role-aht-cue{color:hsl(265,80%,78%);}
+i.ra{background:hsl(265,55%,55%);} i.rs{background:hsl(180,80%,27%);}
+.role-aht-mini{display:flex;flex-direction:column;gap:.25rem;margin:.1rem 0 0;}
+.role-aht-q{display:grid;grid-template-columns:3.4rem minmax(0,1fr);grid-template-rows:auto auto;column-gap:.4rem;row-gap:2px;align-items:center;}
+.role-aht-q span{grid-row:1 / span 2;font-size:.7rem;color:var(--text-muted);}
+.role-aht-bar{position:relative;height:5px;border-radius:3px;}
+.role-aht-bar.ra-bg{background:hsla(265,55%,55%,.15);} .role-aht-bar.rs-bg{background:hsla(180,80%,27%,.15);}
+.role-aht-bar i{display:block;height:5px;border-radius:3px;}
+.role-aht-bar b{position:absolute;top:-2px;width:2px;height:9px;background:var(--text);}
+.role-aht-msg{font-size:.8rem;color:var(--text-muted);line-height:1.4;margin:.3rem 0;}
+.role-aht-link{font:inherit;font-size:.78rem;font-weight:600;color:hsl(265,55%,48%);background:none;border:none;padding:.4rem 0;cursor:pointer;text-decoration:underline;min-height:32px;}
 </style>
 </head>
 <body>
@@ -1403,7 +1423,75 @@ function renderCaseStats() {
   // that still have RADAR cases in them (historical review).
   if (rc.length) cards.splice(3,0,{label:"RADAR AHT",value:fmtSeconds(ra.avgSec)+deltaBadge(ra.avgSec,pra.avgSec,true),sub:ahtSub(ra,rBulk)});
   var g=document.getElementById("caseStatsGrid");
-  if (g) g.innerHTML=cards.map(function(c){return '<div class="stat-card case-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("");
+  if (g) g.innerHTML=cards.map(function(c){return '<div class="stat-card case-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("") + (state.user.isSupervisor ? roleAhtTileHtml() : "");
+}
+
+// ============================================================
+// v4.4.1: SENIOR VS ANALYST AHT (supervisors and admins only)
+// Opens on the table; clicking the tile flips it to bars that show each
+// role against its own pace target (Analyst 4:00, Senior 3:00), and back.
+// Uses the same cases as the cards beside it (date range, team filter).
+// Cases worked during a new hire's 90-day ramp-up are left out so a new
+// class doesn't drag the Analyst number up.
+// ============================================================
+state.roleAhtView = "table";
+function toggleRoleAhtView(){ state.roleAhtView = state.roleAhtView === "bars" ? "table" : "bars"; renderCaseStats(); }
+function showAllRolesForTile(){
+  var sel = document.getElementById("roleFilterHeader");
+  if (sel) { sel.value = "all"; sel.dispatchEvent(new Event("change")); }
+}
+function roleAhtTileHtml(){
+  // Same size as the other AHT tiles. Front: Analyst vs Senior overall.
+  // Back (click): per-queue bars against each role's target.
+  var label = '<div class="stat-label">Senior vs Analyst AHT</div>';
+  if (state.dashboardRoleFilter && state.dashboardRoleFilter !== "all") {
+    return '<div class="stat-card case-card role-aht-tile">'+label
+      + '<div class="role-aht-msg">Showing '+esc(state.dashboardRoleFilter)+' only.</div>'
+      + '<button type="button" class="role-aht-link" onclick="showAllRolesForTile()">Compare all roles</button></div>';
+  }
+  var groups = { a:{ all:[], names:{} }, s:{ all:[], names:{} } }, rampCases = 0;
+  (state.cases||[]).forEach(function(c){
+    var hire = paceHireFor(c.analyst);
+    if (hire) { var d = paceDayNumber(hire, c.date); if (d !== null && d <= 90) { rampCases++; return; } }
+    var k = /senior/i.test(paceRoleFor(c.analyst)) ? "s" : "a";
+    groups[k].all.push(c); groups[k].names[normName(c.analyst)] = true;
+  });
+  var nA = Object.keys(groups.a.names).length, nS = Object.keys(groups.s.names).length;
+  if (!nA || !nS) {
+    return '<div class="stat-card case-card role-aht-tile">'+label+'<div class="role-aht-msg">'
+      + (!nA && !nS ? "No timed cases yet." : "Only "+(nA ? "Analysts" : "Seniors")+" in this view.")+'</div></div>';
+  }
+  var plats = [["Kount","Kount"],["Dispute Review","Dispute"],["Vector Review","Vector"]];
+  function aht(list){ return ahtFromCases(list).avgSec; }
+  function byP(list, p){ return list.filter(function(c){ return c.platform === p; }); }
+  function under(list){ var t=0,u=0; list.forEach(function(c){ var pc = casePace(c); if (!pc) return; t++; if (pc.band !== "red") u++; }); return t ? Math.round(u/t*100)+"%" : "–"; }
+  var A = aht(groups.a.all), S = aht(groups.s.all);
+  // Full numbers for the tooltip (hover), since the tile itself is small.
+  var tip = ["Analyst vs Senior AHT ("+nA+" analysts, "+nS+" seniors)"];
+  plats.forEach(function(p){ tip.push(p[0]+": "+fmtSeconds(aht(byP(groups.a.all,p[0])))+" vs "+fmtSeconds(aht(byP(groups.s.all,p[0])))); });
+  tip.push("Under own target: "+under(groups.a.all)+" vs "+under(groups.s.all));
+  tip.push("Targets: Analyst 4:00, Senior 3:00");
+  if (rampCases) tip.push(rampCases+" new-hire case"+(rampCases===1?"":"s")+" left out");
+  tip.push("Click to switch view");
+  var bars = state.roleAhtView === "bars";
+  var html = '<button type="button" class="stat-card case-card role-aht-tile role-aht-btn" onclick="toggleRoleAhtView()" aria-pressed="'+(bars?"true":"false")+'" title="'+esc(tip.join("\n"))+'">'+label;
+  if (!bars) {
+    var gap = A && S ? Math.round(A - S) : null;
+    html += '<div class="role-aht-pair"><div><div class="role-aht-num">'+fmtSeconds(A)+'</div><div class="role-aht-who"><i class="ra"></i>Analyst</div></div>'
+      + '<div><div class="role-aht-num">'+fmtSeconds(S)+'</div><div class="role-aht-who"><i class="rs"></i>Senior</div></div></div>'
+      + '<div class="stat-sub">'+(gap === null ? "" : "Gap "+(gap < 0 ? "−" : "")+fmtSeconds(Math.abs(gap))+" · ")+'<span class="role-aht-cue">by queue ⇄</span></div>';
+  } else {
+    var vals = []; plats.forEach(function(p){ vals.push(aht(byP(groups.a.all,p[0]))||0, aht(byP(groups.s.all,p[0]))||0); });
+    var max = Math.max(300, Math.max.apply(null, vals) * 1.1);
+    var pc = function(v){ return Math.min(100, (v||0)/max*100).toFixed(1)+"%"; };
+    html += '<div class="role-aht-mini">';
+    plats.forEach(function(p){ var a = aht(byP(groups.a.all,p[0])), b = aht(byP(groups.s.all,p[0]));
+      html += '<div class="role-aht-q"><span>'+p[1]+'</span>'
+        + '<div class="role-aht-bar ra-bg"><i class="ra" style="width:'+pc(a)+'"></i><b style="left:'+pc(240)+'"></b></div>'
+        + '<div class="role-aht-bar rs-bg"><i class="rs" style="width:'+pc(b)+'"></i><b style="left:'+pc(180)+'"></b></div></div>'; });
+    html += '</div><div class="stat-sub" style="white-space:nowrap"><i class="ra role-aht-dot"></i>Analyst <i class="rs role-aht-dot"></i>Senior <span class="role-aht-cue">⇄</span></div>';
+  }
+  return html + '</button>';
 }
 
 function renderCaseChart() {
