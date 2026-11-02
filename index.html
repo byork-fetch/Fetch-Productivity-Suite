@@ -387,7 +387,8 @@ i.ra{background:hsl(265,55%,55%);} i.rs{background:hsl(180,80%,27%);}
       <div class="collapsible" id="idleGapsSection" data-supervisor-only="1">
         <button class="collapsible-trigger" onclick="toggleCollapsible('idleGaps')"><span>⏱️ Idle Time Gaps</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
         <div class="collapsible-content" id="idleGapsContent">
-          <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:.85rem">Unaccounted gaps of 10+ minutes between consecutive logged activities — no break, lunch, or task covers this time.</p>
+          <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:.85rem">Seniors only. Unaccounted gaps of 10+ minutes between logged activities during each person's scheduled hours (work_schedules tab) — no break, lunch, or task covers this time.</p>
+          <p id="idleGapsUnscheduled" style="font-size:.78rem;color:#b07a00;margin:-.4rem 0 .85rem;display:none"></p>
           <div class="table-wrap table-wrap-scroll"><table><thead><tr><th>Date</th><th>Analyst</th><th>After</th><th>Before</th><th>Gap Start</th><th>Gap End</th><th style="text-align:right">Gap Length</th></tr></thead><tbody id="idleGapsBody"><tr><td colspan="7" class="empty">No gaps found for this period</td></tr></tbody></table></div>
         </div>
       </div>
@@ -1104,6 +1105,7 @@ function fetchDashboardData() {
     console.log("[Dashboard] getDashboardData took "+((Date.now()-_t0)/1000).toFixed(1)+"s", result&&result.error?("ERROR: "+result.error):("entries="+((result&&result.entries)||[]).length+", cases="+((result&&result.cases)||[]).length), result&&result._timing?("server: "+JSON.stringify(result._timing)):"");
     if(result&&result.error){ throw new Error(result.error); }
     state.allRangeEntries=(result&&!result.error&&Array.isArray(result.entries))?result.entries:[];
+    state.shiftWindows=(result&&result.shiftWindows&&result.shiftWindows.windows)?result.shiftWindows:null; // v4.4.1
     state.allRangeCases=normCasePlatforms((result&&!result.error&&Array.isArray(result.cases))?result.cases:[]);
     state.allPriorRangeCases=normCasePlatforms((result&&!result.error&&Array.isArray(result.priorCases))?result.priorCases:[]);
     document.getElementById("periodDesc").textContent = "Showing data for " + periodLabel();
@@ -1116,7 +1118,7 @@ function fetchDashboardData() {
   }).catch(function(err){
     console.error("[Dashboard] load failed:", err);
     toast("error","Couldn't load dashboard data: "+(err&&err.message?err.message:err)+". Try 🔄 again.");
-    state.allRangeEntries=[]; state.allRangeCases=[]; state.allPriorRangeCases=[];
+    state.allRangeEntries=[]; state.allRangeCases=[]; state.allPriorRangeCases=[]; state.shiftWindows=null;
     document.getElementById("periodDesc").textContent = "Couldn't load data for " + periodLabel() + ". Try 🔄 again.";
     state.periodLoading = false;
     renderPeriodControls();
@@ -1865,7 +1867,12 @@ function parseEntryTimeMs(date, utcTime) {
   } catch(e) { return null; }
 }
 
+// v4.4.1: when the backend sends shiftWindows, only Seniors with a
+// work_schedules row are checked, and each gap only counts the part inside
+// their scheduled shift. Without it (older backend) it works as before.
+function _idleNormName(s){ return String(s||"").replace(/\s+/g," ").trim().toLowerCase(); }
 function computeIdleGaps(entries) {
+  var sw = state.shiftWindows;
   var byKey = {};
   entries.forEach(function(e){
     var startMs = parseEntryTimeMs(e.date, e.start_time), endMs = parseEntryTimeMs(e.date, e.end_time);
@@ -1876,16 +1883,28 @@ function computeIdleGaps(entries) {
   var gaps = [];
   Object.keys(byKey).forEach(function(key){
     var list = byKey[key].sort(function(a,b){ return a.startMs - b.startMs; });
-    for (var i=0;i<list.length-1;i++){
-      var gapMs = list[i+1].startMs - list[i].endMs;
+    // v4.4.1 FIX: measure from the latest end seen so far, so a row that
+    // overlaps shorter ones doesn't turn time it already covers into a gap.
+    var prev = list[0];
+    for (var i=1;i<list.length;i++){
+      var gapMs = list[i].startMs - prev.endMs;
       if (gapMs > IDLE_GAP_THRESHOLD_SEC*1000) {
-        gaps.push({
-          analyst: list[i].analyst, date: list[i].date,
-          afterTask: list[i].task, beforeTask: list[i+1].task,
-          gapStartMs: list[i].endMs, gapEndMs: list[i+1].startMs,
-          gapSec: Math.round(gapMs/1000)
+        var pieces = [[prev.endMs, list[i].startMs]];
+        if (sw) {
+          var wins = sw.windows[_idleNormName(list[i].analyst)+"|"+String(list[i].date).substring(0,10)] || [];
+          pieces = wins.map(function(w){ return [Math.max(prev.endMs,w[0]), Math.min(list[i].startMs,w[1])]; })
+                       .filter(function(pc){ return pc[1]-pc[0] > IDLE_GAP_THRESHOLD_SEC*1000; });
+        }
+        pieces.forEach(function(pc){
+          gaps.push({
+            analyst: list[i].analyst, date: list[i].date,
+            afterTask: prev.task, beforeTask: list[i].task,
+            gapStartMs: pc[0], gapEndMs: pc[1],
+            gapSec: Math.round((pc[1]-pc[0])/1000)
+          });
         });
       }
+      if (list[i].endMs > prev.endMs) prev = list[i];
     }
   });
   return gaps.sort(function(a,b){ return b.gapSec - a.gapSec; });
@@ -1896,6 +1915,14 @@ function renderIdleGaps() {
   var el = document.getElementById("idleGapsBody");
   if (!el) return;
   var gaps = computeIdleGaps(state.entries).slice(0, 100);
+  var un = document.getElementById("idleGapsUnscheduled");
+  if (un) {
+    var names = (state.shiftWindows && state.shiftWindows.unscheduled) || [];
+    var shown = {}; (state.entries||[]).forEach(function(e){ shown[e.analyst]=true; });
+    names = names.filter(function(n){ return shown[n]; });
+    un.style.display = names.length ? "" : "none";
+    un.textContent = names.length ? "No schedule on file, not checked: " + names.join(", ") : "";
+  }
   el.innerHTML = gaps.length===0 ? '<tr><td colspan="7" class="empty">No gaps found for this period</td></tr>' : gaps.map(function(g){
     return '<tr><td>'+esc(g.date)+'</td><td><span class="badge">'+esc(g.analyst)+'</span></td><td>'+esc(g.afterTask)+'</td><td>'+esc(g.beforeTask)+'</td><td>'+new Date(g.gapStartMs).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit",hour12:true})+'</td><td>'+new Date(g.gapEndMs).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit",hour12:true})+'</td><td style="text-align:right;font-weight:600">'+fmtDuration(g.gapSec)+'</td></tr>';
   }).join("");
