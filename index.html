@@ -1433,7 +1433,45 @@ function renderCaseStats() {
   // that still have RADAR cases in them (historical review).
   if (rc.length) cards.splice(3,0,{label:"RADAR AHT",value:fmtSeconds(ra.avgSec)+deltaBadge(ra.avgSec,pra.avgSec,true),sub:ahtSub(ra,rBulk)});
   var g=document.getElementById("caseStatsGrid");
-  if (g) g.innerHTML=cards.map(function(c){return '<div class="stat-card case-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("") + (state.user.isSupervisor ? roleAhtTileHtml() : "");
+  if (g) g.innerHTML=cards.map(function(c){return '<div class="stat-card case-card"><div class="stat-label">'+c.label+'</div><div class="stat-value">'+c.value+'</div><div class="stat-sub">'+c.sub+'</div></div>';}).join("") + (state.user.isSupervisor ? roleAhtTileHtml() : "") + overtimeTileHtml();
+}
+
+// ============================================================
+// v4.4.1: OVERTIME TILE (everyone)
+// Supervisors/admins: team total for the period and how many people it
+// covers; click to open the Overtime table. Analysts: their own overtime
+// (the backend only sends their own row). Same rules as the Overtime
+// section: over 8 worked hours on a scheduled day, or any time on an OFF
+// day; lunch excluded. Follows the team/analyst filter.
+// ============================================================
+function overtimeTileHtml(){
+  if (!state.overtime) return "";
+  var shown = {}; (state.entries||[]).forEach(function(e){ shown[e.analyst]=true; });
+  var rows = state.overtime.filter(function(a){ return shown[a.analyst]; });
+  var tot = 0, over = 0, off = 0, people = 0, unknown = false;
+  rows.forEach(function(a){ tot += a.otSec; over += a.overDaySec; off += a.offDaySec; if (a.otSec >= 60) people++; if (!a.scheduleKnown) unknown = true; });
+  var v = function(sec){ return sec >= 60 ? fmtDurationShort(sec) : "0h 0m"; };
+  var parts = [];
+  if (over >= 60) parts.push(v(over)+" over 8h");
+  if (off >= 60) parts.push(v(off)+" on off days");
+  var sub;
+  if (state.user.isSupervisor) {
+    sub = (people ? people+" "+(people===1?"person":"people")+(parts.length?" · "+parts.join(" · "):"") : "No overtime tracked")+" · <span class=\"role-aht-cue\">details ↓</span>";
+  } else {
+    sub = parts.length ? parts.join(" · ") : "No overtime tracked";
+    if (unknown) sub += " · off days unknown";
+  }
+  var tip = "Worked time over 8 hours on a scheduled day, plus any time on an OFF day. Lunch excluded; 15-minute breaks count. Based on tracked time only.";
+  var label = '<div class="stat-label">'+(state.user.isSupervisor ? "Team Overtime" : "My Overtime")+' ('+periodLabel()+')</div>';
+  var inner = label+'<div class="stat-value">'+v(tot)+'</div><div class="stat-sub">'+sub+'</div>';
+  if (!state.user.isSupervisor) return '<div class="stat-card case-card" title="'+esc(tip)+'">'+inner+'</div>';
+  return '<button type="button" class="stat-card case-card role-aht-tile role-aht-btn" onclick="openOvertimeSection()" title="'+esc(tip+" Click for the per-person table.")+'">'+inner+'</button>';
+}
+function openOvertimeSection(){
+  var c = document.getElementById("overtimeContent");
+  if (c && !c.classList.contains("open")) toggleCollapsible("overtime");
+  var sec = document.getElementById("overtimeSection");
+  if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 // ============================================================
