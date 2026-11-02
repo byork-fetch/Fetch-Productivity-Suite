@@ -56,21 +56,26 @@ function isAdminRole(role) {
 // Training Coordinator, Audit Analyst, and any new role added later.
 // The PI-prefixed spellings are kept so either naming works.
 var REPORTABLE_ROLES = ["analyst", "senior analyst", "sr analyst", "sr. analyst", "pi analyst", "senior pi analyst", "pi senior analyst", "sr pi analyst"];
+// v4.4.1: Seniors use the extension for their whole day; Analysts are only
+// required to for AHT. Idle Time Gaps only make sense for full-day users,
+// so they're limited to these roles.
+var IDLE_GAP_ROLES = ["senior analyst", "sr analyst", "sr. analyst", "senior pi analyst", "pi senior analyst", "sr pi analyst"];
 function _normRoleName(s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); }
 
 var _rosterMemo = null;
-// { reportable: {normName:true}, privileged: {normName:true} }
+// { reportable: {normName:true}, privileged: {normName:true}, idleTracked: {normName:true} }
 function _getRoster() {
   if (_rosterMemo) return _rosterMemo;
-  var built = cachedCall("roster_v435", 300, function() {
+  var built = cachedCall("roster_v441", 300, function() {
     var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    var reportable = {}, privileged = {};
+    var reportable = {}, privileged = {}, idleTracked = {};
     var ta = ss.getSheetByName(SHEET_TEAM_ASSIGN);
     if (ta && ta.getLastRow() > 1) {
       ta.getRange(2, 1, ta.getLastRow() - 1, 4).getValues().forEach(function(r){
         if (!r[0]) return;
         var role = _normRoleName(r[3]) || "analyst";
         if (REPORTABLE_ROLES.indexOf(role) !== -1) reportable[_normRoleName(r[0])] = true;
+        if (IDLE_GAP_ROLES.indexOf(role) !== -1) idleTracked[_normRoleName(r[0])] = true;
       });
     }
     var us = ss.getSheetByName(SHEET_USERS);
@@ -79,13 +84,18 @@ function _getRoster() {
         if (isPrivileged(r[1]) && r[2]) privileged[_normRoleName(r[2])] = true;
       });
     }
-    return { reportable: reportable, privileged: privileged };
+    return { reportable: reportable, privileged: privileged, idleTracked: idleTracked };
   }, ["misc"]);
-  _rosterMemo = built || { reportable: {}, privileged: {} };
+  _rosterMemo = built || { reportable: {}, privileged: {}, idleTracked: {} };
+  if (!_rosterMemo.idleTracked) _rosterMemo.idleTracked = {};
   return _rosterMemo;
 }
 // Counted in team-wide numbers (digest totals, flags): an analyst-role
 // person who isn't an admin/supervisor account.
+// v4.4.1: Senior roles only — the people Idle Time Gaps are reported for.
+function _isIdleTracked(name) {
+  return !!_getRoster().idleTracked[_normRoleName(name)];
+}
 function _isReportable(name) {
   var r = _getRoster(), k = _normRoleName(name);
   return !!r.reportable[k] && !r.privileged[k];
@@ -416,6 +426,8 @@ function doGet(e) {
       if (action === "getDashboardData") {
         var dd = getDashboardData(params.start, params.end, params.priorStart, params.priorEnd);
         if (dd && !dd.error) { dd.entries = _scopeRows(dd.entries); dd.cases = _scopeRows(dd.cases); dd.priorCases = _scopeRows(dd.priorCases); }
+        // v4.4.1: shift windows for the Idle Time Gaps table (supervisor view only)
+        if (dd && !dd.error && _caller.privileged) { try { dd.shiftWindows = _buildShiftWindows(dd.entries); } catch(swErr) { Logger.log("shiftWindows: " + swErr); } }
         return jsonResponse(dd);
       }
       if (action === "getTeamData") {
@@ -1756,11 +1768,158 @@ function _digestGetPrivilegedNames() {
   } catch(e) { return {}; }
 }
 
-// Server-side port of index.html's parseEntryTimeMs/computeIdleGaps — those
-// only existed client-side before, so the digest previously had no way to
-// surface idle time at all. Same 10-minute threshold and same UTC-time
-// parsing convention as the dashboard (start_time/end_time are stored as
-// bare "HH:MM:SS" UTC strings unless they already contain a full ISO "T").
+// ============================================================
+// WORK SCHEDULES (v4.4.1)
+// Idle Time Gaps only count time inside someone's scheduled shift.
+// Tab "work_schedules", one row per schedule pattern:
+//   A analyst_name  (same spelling as team_assignments)
+//   B days          ("Mon-Fri", "Mon, Wed, Fri", "Tue-Sat", "Sat")
+//   C shift_start   ("8:00 AM", "8am", "08:00")
+//   D shift_end     ("4:30 PM", "16:30")
+//   E time_zone     ("Eastern", "Central", "Mountain", "Pacific", or an
+//                    IANA name like America/Chicago; blank = script's zone)
+// Most people need one row. Someone whose hours vary gets a row per
+// pattern (e.g. "Mon-Thu 8-4:30" and "Fri 7-3:30"). A day with no
+// matching row is a day off, so no gaps are counted that day. Someone
+// with no rows at all isn't counted and is listed as "no schedule".
+// Only Senior roles are checked for idle gaps (see IDLE_GAP_ROLES), so only
+// they need rows. Run setupWorkSchedulesSheet() once from the editor to
+// create the tab, prefilled with every Senior on team_assignments.
+// ============================================================
+var SHEET_WORK_SCHEDULES = "work_schedules";
+var WORK_SCHEDULE_HEADERS = ["analyst_name", "days", "shift_start", "shift_end", "time_zone"];
+var _DAY_IDX = { sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6 };
+var _TZ_ALIASES = {
+  eastern:"America/New_York", et:"America/New_York", est:"America/New_York", edt:"America/New_York",
+  central:"America/Chicago", ct:"America/Chicago", cst:"America/Chicago", cdt:"America/Chicago",
+  mountain:"America/Denver", mt:"America/Denver", mst:"America/Denver", mdt:"America/Denver",
+  arizona:"America/Phoenix",
+  pacific:"America/Los_Angeles", pt:"America/Los_Angeles", pst:"America/Los_Angeles", pdt:"America/Los_Angeles"
+};
+
+function setupWorkSchedulesSheet() {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sh = ss.getSheetByName(SHEET_WORK_SCHEDULES);
+  if (sh) { Logger.log("work_schedules already exists — left as is."); return; }
+  sh = ss.insertSheet(SHEET_WORK_SCHEDULES);
+  sh.getRange(1, 1, 1, WORK_SCHEDULE_HEADERS.length).setValues([WORK_SCHEDULE_HEADERS]).setFontWeight("bold");
+  sh.setFrozenRows(1);
+  sh.getRange("C:D").setNumberFormat("@"); // keep "8:00 AM" as typed text
+  var ta = ss.getSheetByName(SHEET_TEAM_ASSIGN);
+  var rows = [];
+  if (ta && ta.getLastRow() > 1) {
+    ta.getRange(2, 1, ta.getLastRow() - 1, 1).getValues().forEach(function(r){
+      var n = String(r[0] || "").trim();
+      if (n && _isIdleTracked(n)) rows.push([n, "Mon-Fri", "", "", ""]);
+    });
+  }
+  if (rows.length) sh.getRange(2, 1, rows.length, 5).setValues(rows);
+  sh.getRange(1, 7).setValue("Fill in start, end and time zone. Add another row for anyone whose hours differ by day (e.g. Mon-Thu on one row, Fri on another).");
+  Logger.log("work_schedules created with " + rows.length + " analyst row(s).");
+}
+
+function _parseScheduleDays(s) {
+  var out = {};
+  String(s || "").toLowerCase().split(/[,;\/]+/).forEach(function(tok){
+    tok = tok.trim(); if (!tok) return;
+    var m = tok.match(/^([a-z]{3})[a-z]*\s*(?:-|–|to)\s*([a-z]{3})[a-z]*$/);
+    if (m && m[1] in _DAY_IDX && m[2] in _DAY_IDX) {
+      var a = _DAY_IDX[m[1]], b = _DAY_IDX[m[2]];
+      for (var i = 0; i < 7; i++) { var d = (a + i) % 7; out[d] = true; if (d === b) break; }
+      return;
+    }
+    var k = tok.substring(0, 3);
+    if (k in _DAY_IDX) out[_DAY_IDX[k]] = true;
+  });
+  return Object.keys(out).map(Number);
+}
+
+// Minutes after local midnight, or null.
+function _parseScheduleTime(v, sheetTz) {
+  if (v === "" || v === null || v === undefined) return null;
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return null;
+    var hm = Utilities.formatDate(v, sheetTz, "H:m").split(":");
+    return Number(hm[0]) * 60 + Number(hm[1]);
+  }
+  if (typeof v === "number") return Math.round(v * 1440) % 1440; // day fraction
+  var m = String(v).trim().toLowerCase().replace(/\./g, "").match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a|p)?$/);
+  if (!m) return null;
+  var h = Number(m[1]), mi = Number(m[2] || 0), ap = m[3];
+  if (ap) { if (h === 12) h = 0; if (ap.charAt(0) === "p") h += 12; }
+  if (h > 23 || mi > 59) return null;
+  return h * 60 + mi;
+}
+
+function _resolveScheduleTz(s) {
+  var t = String(s || "").trim();
+  if (!t) return Session.getScriptTimeZone();
+  if (t.indexOf("/") !== -1) return t;
+  return _TZ_ALIASES[t.toLowerCase()] || Session.getScriptTimeZone();
+}
+
+// { normName: [ {days:[..], startMin, endMin, tz} ] }
+function _getWorkSchedules() {
+  return cachedCall("work_sched_v441", 300, function() {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sh = ss.getSheetByName(SHEET_WORK_SCHEDULES);
+    if (!sh || sh.getLastRow() < 2) return {};
+    var sheetTz = ss.getSpreadsheetTimeZone();
+    var out = {};
+    sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues().forEach(function(r){
+      var name = _normRoleName(r[0]);
+      var days = _parseScheduleDays(r[1]);
+      var s = _parseScheduleTime(r[2], sheetTz), e = _parseScheduleTime(r[3], sheetTz);
+      if (!name || !days.length || s === null || e === null) return;
+      (out[name] = out[name] || []).push({ days: days, startMin: s, endMin: e, tz: _resolveScheduleTz(r[4]) });
+    });
+    return out;
+  });
+}
+
+// UTC ms of a local wall-clock time on dateStr in tz. Offset is taken at
+// local noon, which is safe because DST changes happen at 2am.
+function _localToUtcMs(dateStr, minutes, tz) {
+  var p = dateStr.split("-").map(Number);
+  var z = Utilities.formatDate(new Date(Date.UTC(p[0], p[1]-1, p[2], 12)), tz, "Z"); // "-0500"
+  var off = (z.charAt(0) === "-" ? -1 : 1) * (Number(z.substr(1, 2)) * 60 + Number(z.substr(3, 2)));
+  return Date.UTC(p[0], p[1]-1, p[2], 0, minutes) - off * 60000;
+}
+
+// For every Senior's analyst|date in entries: shift windows as
+// [[startMs,endMs],...] ([] = scheduled day off). Non-Seniors get no key,
+// so no gaps. unscheduled = Seniors with no schedule rows.
+function _buildShiftWindows(entries) {
+  var sched = _getWorkSchedules();
+  var windows = {}, unscheduled = {};
+  (entries || []).forEach(function(e){
+    if (!e || !e.date) return;
+    var name = _normRoleName(e.analyst), date = String(e.date).substring(0, 10);
+    var key = name + "|" + date;
+    if (key in windows || unscheduled[e.analyst]) return;
+    if (!_isIdleTracked(e.analyst)) return; // Analysts: AHT-only users, no gaps
+    var rows = sched[name];
+    if (!rows || !rows.length) { unscheduled[e.analyst] = true; return; }
+    var p = date.split("-").map(Number);
+    var dow = new Date(Date.UTC(p[0], p[1]-1, p[2])).getUTCDay();
+    windows[key] = rows.filter(function(r){ return r.days.indexOf(dow) !== -1; }).map(function(r){
+      var s = _localToUtcMs(date, r.startMin, r.tz), en = _localToUtcMs(date, r.endMin, r.tz);
+      if (en <= s) en += 86400000;
+      return [s, en];
+    });
+  });
+  return { windows: windows, unscheduled: Object.keys(unscheduled).sort() };
+}
+
+// Server-side port of index.html's parseEntryTimeMs/computeIdleGaps. Same
+// 10-minute threshold and parsing as the dashboard: start_time/end_time are
+// full ISO timestamps (extension + v4.3.6 edits); a bare "HH:MM:SS" from an
+// old row is read as UTC on the entry's date.
+// v4.4.1 FIX: gaps are measured from the LATEST end seen so far that day,
+// not just the previous row's end. Before, one long row that overlapped
+// shorter ones (two computers/profiles tracking at once, or any row the
+// extension wrote on top of another) made the time it already covered
+// count as idle, which inflated the weekly total.
 var DIGEST_IDLE_GAP_THRESHOLD_SEC = 600;
 
 function _digestParseEntryTimeMs(date, utcTime) {
@@ -1772,7 +1931,19 @@ function _digestParseEntryTimeMs(date, utcTime) {
   } catch(e) { return null; }
 }
 
-function _digestComputeIdleGaps(entries) {
+// v4.4.1: each gap only counts the part inside that person's scheduled
+// shift (work_schedules). Days off and people with no schedule add nothing.
+function _clipGapToShift(gapStartMs, gapEndMs, wins) {
+  var pieces = [];
+  (wins || []).forEach(function(w){
+    var a = Math.max(gapStartMs, w[0]), b = Math.min(gapEndMs, w[1]);
+    if (b - a > DIGEST_IDLE_GAP_THRESHOLD_SEC * 1000) pieces.push([a, b]);
+  });
+  return pieces;
+}
+
+function _digestComputeIdleGaps(entries, shift) {
+  shift = shift || _buildShiftWindows(entries);
   var byKey = {};
   entries.forEach(function(e){
     var startMs = _digestParseEntryTimeMs(e.date, e.start_time), endMs = _digestParseEntryTimeMs(e.date, e.end_time);
@@ -1783,11 +1954,15 @@ function _digestComputeIdleGaps(entries) {
   var gaps = [];
   Object.keys(byKey).forEach(function(key){
     var list = byKey[key].sort(function(a,b){ return a.startMs - b.startMs; });
-    for (var i = 0; i < list.length - 1; i++) {
-      var gapSec = Math.round((list[i+1].startMs - list[i].endMs) / 1000);
-      if (gapSec > DIGEST_IDLE_GAP_THRESHOLD_SEC) {
-        gaps.push({ analyst: list[i].analyst, date: list[i].date, gapSec: gapSec });
+    var maxEnd = list.length ? list[0].endMs : 0;
+    for (var i = 1; i < list.length; i++) {
+      if (list[i].startMs - maxEnd > DIGEST_IDLE_GAP_THRESHOLD_SEC * 1000) {
+        var wins = shift.windows[_normRoleName(list[i].analyst) + "|" + String(list[i].date).substring(0, 10)];
+        _clipGapToShift(maxEnd, list[i].startMs, wins).forEach(function(pc){
+          gaps.push({ analyst: list[i].analyst, date: list[i].date, gapSec: Math.round((pc[1] - pc[0]) / 1000) });
+        });
       }
+      if (list[i].endMs > maxEnd) maxEnd = list[i].endMs;
     }
   });
   return gaps;
@@ -1798,7 +1973,8 @@ function _digestComputeIdleGaps(entries) {
 // digest week and hidden-roster-filtered (sendWeeklyDigest does both before
 // calling this).
 function _digestSummarizeIdleGaps(entries) {
-  var gaps = _digestComputeIdleGaps(entries);
+  var shift = _buildShiftWindows(entries);
+  var gaps = _digestComputeIdleGaps(entries, shift);
   var totalSec = gaps.reduce(function(a,g){ return a + g.gapSec; }, 0);
   var byAnalyst = {};
   gaps.forEach(function(g){ byAnalyst[g.analyst] = (byAnalyst[g.analyst] || 0) + g.gapSec; });
@@ -1806,7 +1982,7 @@ function _digestSummarizeIdleGaps(entries) {
     .map(function(name){ return { name: name, sec: byAnalyst[name] }; })
     .sort(function(a,b){ return b.sec - a.sec; })
     .slice(0, 3);
-  return { gapCount: gaps.length, totalSec: totalSec, topOffenders: topOffenders };
+  return { gapCount: gaps.length, totalSec: totalSec, topOffenders: topOffenders, unscheduled: shift.unscheduled };
 }
 
 // This-week vs prior-full-week avg AHT per platform, for the "vs last week"
@@ -1953,16 +2129,19 @@ function sendWeeklyDigest() {
     var weekEntries = (Array.isArray(weekEntriesRaw) ? weekEntriesRaw : []).filter(function(e){ return !privileged[_digestNormName(e.analyst)] && _isReportable(e.analyst); });
     var idleSummary = _digestSummarizeIdleGaps(weekEntries);
     var idleSection = "";
+    // v4.4.1: Seniors only, clipped to each person's work_schedules hours.
+    var idleNote = idleSummary.unscheduled && idleSummary.unscheduled.length
+      ? '<p style="color:#b07a00;font-size:12px;margin:8px 0 0">No schedule on file (not counted): '+idleSummary.unscheduled.map(esc).join(', ')+'</p>' : '';
     if (idleSummary.gapCount > 0) {
       var idleRows = idleSummary.topOffenders.map(function(o){
         return '<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">'+esc(o.name)+'</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600">'+fmtMinShort(o.sec)+'</td></tr>';
       }).join("");
-      idleSection = '<h3 style="margin:24px 0 4px;font-size:14px;color:#333">⏱️ Idle Time Gaps</h3>'
-        + '<p style="color:#888;font-size:12px;margin:0 0 8px">'+idleSummary.gapCount+' unaccounted gap'+(idleSummary.gapCount===1?'':'s')+' of 10+ min this week, totaling '+fmtMinShort(idleSummary.totalSec)+'</p>'
-        + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>'+idleRows+'</tbody></table>';
+      idleSection = '<h3 style="margin:24px 0 4px;font-size:14px;color:#333">⏱️ Idle Time Gaps (Seniors)</h3>'
+        + '<p style="color:#888;font-size:12px;margin:0 0 8px">'+idleSummary.gapCount+' unaccounted gap'+(idleSummary.gapCount===1?'':'s')+' of 10+ min during scheduled hours this week, totaling '+fmtMinShort(idleSummary.totalSec)+'</p>'
+        + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>'+idleRows+'</tbody></table>' + idleNote;
     } else {
-      idleSection = '<h3 style="margin:24px 0 4px;font-size:14px;color:#333">⏱️ Idle Time Gaps</h3>'
-        + '<p style="color:#888;font-size:12px;margin:0">No unaccounted 10+ min gaps this week. 👍</p>';
+      idleSection = '<h3 style="margin:24px 0 4px;font-size:14px;color:#333">⏱️ Idle Time Gaps (Seniors)</h3>'
+        + '<p style="color:#888;font-size:12px;margin:0">No unaccounted 10+ min gaps during scheduled hours this week. 👍</p>' + idleNote;
     }
 
     var totalCases = cases.length;
