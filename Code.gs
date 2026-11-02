@@ -432,6 +432,7 @@ function doGet(e) {
         if (dd && !dd.error) { dd.entries = _scopeRows(dd.entries); dd.cases = _scopeRows(dd.cases); dd.priorCases = _scopeRows(dd.priorCases); }
         // v4.4.1: shift windows for the Idle Time Gaps table (supervisor view only)
         if (dd && !dd.error && _caller.privileged) { try { dd.shiftWindows = _buildShiftWindows(dd.entries); } catch(swErr) { Logger.log("shiftWindows: " + swErr); } }
+        if (dd && !dd.error && _caller.privileged) { try { dd.overtime = _computeOvertime(dd.entries).byAnalyst; } catch(otErr) { Logger.log("overtime: " + otErr); } }
         return jsonResponse(dd);
       }
       if (action === "getTeamData") {
@@ -1903,6 +1904,74 @@ function _buildShiftWindows(entries) {
   return { windows: windows, unscheduled: Object.keys(unscheduled).sort() };
 }
 
+// ============================================================
+// OVERTIME (v4.4.1)
+//   - Worked time = every tracked entry except Lunch (unpaid). 15-min
+//     Breaks count. Overlapping rows are merged so nothing counts twice.
+//   - Work started before OT_DAY_ROLLOVER_HOUR (local) belongs to the
+//     previous day, so late-night OT past midnight stays on that night.
+//   - Scheduled day: anything over 8 hours is OT. OFF day (work_schedules
+//     "OFF"): every hour is OT.
+//   - No schedule row (or a blank day): the 8-hour rule still applies, but
+//     OFF days can't be recognised — flagged as "off days unknown".
+// Everyone is included; Analysts who only track AHT will undercount.
+// ============================================================
+var OT_DAILY_REGULAR_SEC = 8 * 3600;
+var OT_DAY_ROLLOVER_HOUR = 4;
+var OT_UNPAID_TASK_RE = /lunch/i;
+
+function _prevYmd(ymd) {
+  var p = ymd.split("-").map(Number);
+  var d = new Date(Date.UTC(p[0], p[1]-1, p[2]) - 86400000);
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth()+1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
+}
+
+// Returns { byAnalyst: [{analyst, days, workedSec, regularSec, overDaySec,
+//   offDaySec, otSec, scheduleKnown}], byDay: [{analyst, date, workedSec,
+//   off, otSec}] }, sorted by most OT first.
+// Optional fromYmd/toYmd keep only days in that range (the caller can pass
+// entries from one extra day so after-midnight work rolls back in).
+function _computeOvertime(entries, fromYmd, toYmd) {
+  var sched = _getWorkSchedules();
+  var scriptTz = Session.getScriptTimeZone();
+  var byKey = {};
+  (entries || []).forEach(function(e){
+    if (!e || OT_UNPAID_TASK_RE.test(String(e.task || ""))) return;
+    var dateStr = String(e.date || "").substring(0, 10);
+    var s = _entryTimeMs(dateStr, e.start_time), en = _entryTimeMs(dateStr, e.end_time);
+    if (s === null || en === null || en <= s) return;
+    var rec = sched[_normRoleName(e.analyst)];
+    var tz = rec ? rec.tz : scriptTz;
+    var local = Utilities.formatDate(new Date(s), tz, "yyyy-MM-dd H").split(" ");
+    var day = Number(local[1]) < OT_DAY_ROLLOVER_HOUR ? _prevYmd(local[0]) : local[0];
+    if ((fromYmd && day < fromYmd) || (toYmd && day > toYmd)) return;
+    var key = e.analyst + "|" + day;
+    (byKey[key] = byKey[key] || { analyst: e.analyst, date: day, iv: [] }).iv.push([s, en]);
+  });
+  var people = {}, days = [];
+  Object.keys(byKey).forEach(function(k){
+    var g = byKey[k];
+    var iv = g.iv.sort(function(a,b){ return a[0]-b[0]; }), worked = 0, cs = iv[0][0], ce = iv[0][1];
+    for (var i = 1; i < iv.length; i++) {
+      if (iv[i][0] <= ce) { if (iv[i][1] > ce) ce = iv[i][1]; }
+      else { worked += ce - cs; cs = iv[i][0]; ce = iv[i][1]; }
+    }
+    worked = Math.round((worked + ce - cs) / 1000);
+    var rec = sched[_normRoleName(g.analyst)];
+    var p = g.date.split("-").map(Number);
+    var cell = rec ? rec.days[new Date(Date.UTC(p[0], p[1]-1, p[2])).getUTCDay()] : undefined;
+    var off = cell === "off";
+    var ot = off ? worked : Math.max(0, worked - OT_DAILY_REGULAR_SEC);
+    days.push({ analyst: g.analyst, date: g.date, workedSec: worked, off: off, otSec: ot });
+    var a = people[g.analyst] = people[g.analyst] || { analyst: g.analyst, days: 0, workedSec: 0, regularSec: 0, overDaySec: 0, offDaySec: 0, otSec: 0, scheduleKnown: !!rec };
+    a.days++; a.workedSec += worked; a.regularSec += worked - ot; a.otSec += ot;
+    if (off) a.offDaySec += ot; else a.overDaySec += ot;
+  });
+  var list = Object.keys(people).map(function(n){ return people[n]; }).sort(function(a,b){ return b.otSec - a.otSec || a.analyst.localeCompare(b.analyst); });
+  days.sort(function(a,b){ return b.otSec - a.otSec; });
+  return { byAnalyst: list, byDay: days };
+}
+
 // Server-side port of index.html's parseEntryTimeMs/computeIdleGaps. Same
 // 10-minute threshold and parsing as the dashboard: start_time/end_time are
 // full ISO timestamps (extension + v4.3.6 edits); a bare "HH:MM:SS" from an
@@ -2136,6 +2205,32 @@ function sendWeeklyDigest() {
         + '<p style="color:#888;font-size:12px;margin:0">No unaccounted 10+ min gaps during scheduled hours this week. 👍</p>' + idleNote;
     }
 
+    // v4.4.1: Overtime — over 8 worked hours on a scheduled day, or any
+    // time on an OFF day. Everyone with time entries is included.
+    // Read one day past the week so Saturday-night work past midnight counts.
+    var otNextDay = _digestFormatDate(new Date(new Date(weekEndStr + "T12:00:00Z").getTime() + 86400000));
+    var otRaw = getTimeEntries(weekStartStr, otNextDay);
+    var otEntries = (Array.isArray(otRaw) ? otRaw : []).filter(function(e){ return !privileged[_digestNormName(e.analyst)] && _isReportable(e.analyst); });
+    var otList = _computeOvertime(otEntries, weekStartStr, weekEndStr).byAnalyst.filter(function(a){ return a.otSec >= 900; });
+    var otSection;
+    if (otList.length) {
+      var otTotal = otList.reduce(function(t,a){ return t + a.otSec; }, 0);
+      var otRows = otList.map(function(a){
+        var parts = [];
+        if (a.overDaySec >= 60) parts.push(fmtMinShort(a.overDaySec) + ' over 8h');
+        if (a.offDaySec >= 60) parts.push(fmtMinShort(a.offDaySec) + ' on off days');
+        return '<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">'+esc(a.analyst)+(a.scheduleKnown?'':' <span style="color:#b07a00;font-size:11px">(off days unknown)</span>')+'</td>'
+          + '<td style="padding:8px 12px;border-bottom:1px solid #eee;color:#888;font-size:12px">'+parts.join(' · ')+'</td>'
+          + '<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600">'+fmtMinShort(a.otSec)+'</td></tr>';
+      }).join("");
+      otSection = '<h3 style="margin:24px 0 4px;font-size:14px;color:#333">🕒 Overtime</h3>'
+        + '<p style="color:#888;font-size:12px;margin:0 0 8px">'+otList.length+' '+(otList.length===1?'person':'people')+', '+fmtMinShort(otTotal)+' total. Worked time over 8h on a scheduled day, or any time on an off day (lunch excluded). Based on tracked time only.</p>'
+        + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>'+otRows+'</tbody></table>';
+    } else {
+      otSection = '<h3 style="margin:24px 0 4px;font-size:14px;color:#333">🕒 Overtime</h3>'
+        + '<p style="color:#888;font-size:12px;margin:0">No overtime tracked this week.</p>';
+    }
+
     var totalCases = cases.length;
     var gradientBg = "background:#d85a30;background:linear-gradient(135deg,#e35c3c 0%,#c23d6e 100%)";
     var html = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Arial,sans-serif;color:#222;max-width:560px;margin:0 auto">'
@@ -2153,6 +2248,7 @@ function sendWeeklyDigest() {
       + '<table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr><th style="text-align:left;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Week</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Cases</th><th style="text-align:right;padding:6px 12px;border-bottom:2px solid #333;font-size:12px;color:#666">Avg AHT</th></tr></thead><tbody>'
       + trendRows + '</tbody></table>'
       + idleSection
+      + otSection
       + '<h3 style="margin:22px 0 6px;font-size:14px;color:#333">Top Analysts This Week</h3>'
       + '<table style="border-collapse:collapse;width:100%;font-size:13px"><tbody>' + topRows + '</tbody></table>'
       + '<p style="color:#999;font-size:11px;margin-top:22px;padding-top:14px;border-top:1px solid #eee">Sent automatically every Monday.</p>'
