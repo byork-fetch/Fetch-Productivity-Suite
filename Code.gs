@@ -432,7 +432,9 @@ function doGet(e) {
         if (dd && !dd.error) { dd.entries = _scopeRows(dd.entries); dd.cases = _scopeRows(dd.cases); dd.priorCases = _scopeRows(dd.priorCases); }
         // v4.4.1: shift windows for the Idle Time Gaps table (supervisor view only)
         if (dd && !dd.error && _caller.privileged) { try { dd.shiftWindows = _buildShiftWindows(dd.entries); } catch(swErr) { Logger.log("shiftWindows: " + swErr); } }
-        if (dd && !dd.error && _caller.privileged) { try { dd.overtime = _computeOvertime(dd.entries).byAnalyst; } catch(otErr) { Logger.log("overtime: " + otErr); } }
+        // Overtime goes to everyone: dd.entries is already scoped, so an
+        // analyst only ever gets their own row back.
+        if (dd && !dd.error) { try { dd.overtime = _computeOvertime(dd.entries).byAnalyst; } catch(otErr) { Logger.log("overtime: " + otErr); } }
         return jsonResponse(dd);
       }
       if (action === "getTeamData") {
