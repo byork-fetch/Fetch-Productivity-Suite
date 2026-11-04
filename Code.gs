@@ -1,11 +1,14 @@
 // ============================================================
-// PI PRODUCTIVITY SUITE — Google Apps Script Backend
+// TEST - PI PRODUCTIVITY SUITE — Google Apps Script Backend
 // Code.gs — v4.4.0 (GitHub Pages / fetch() compatible)
 // ============================================================
 // All data reads now go through doGet with ?action=... params.
 // The dashboard is hosted on GitHub Pages and calls this
 // endpoint via fetch() instead of google.script.run.
 // doPost is unchanged — extension sync still works as before.
+// v4.4.2 additions: extension name lookup (kind:'whoami'), a verified
+// account's users-sheet name wins over the typed one, and Fetch accounts
+// that aren't in the users sheet can't use the dashboard.
 // ============================================================
 
 var SHEET_TIME_ENTRIES = "time_entries";
@@ -14,7 +17,7 @@ var SHEET_TEAM_ASSIGN  = "team_assignments";
 var SHEET_CASES        = "Cases";
 var SHEET_ATTENTION_REVIEWS = "attention_reviews";
 var SHEET_DIGEST_RECIPIENTS = "digest_recipients";
-var SPREADSHEET_ID     = "1Kl57TacbVJmTAJTLqJ_vVIFqTkQMxY0vC1ejBULya5M";
+var SPREADSHEET_ID     = "10_UHlqoiq3E2nHKVfPpfm6B84qA_pjGi0x6In5CWKrg";
 var EXTENSION_SECRET   = "fetch-fraud-squad";
 // Dashboard secret — used by the GitHub Pages frontend to authenticate
 // data fetch requests. Keep this in sync with DASHBOARD_SECRET in index.html.
@@ -347,13 +350,18 @@ function _verifyGoogleIdToken(idToken) {
 function _getCallerRecord(email) {
   var rec = cachedCall("userRecord:" + email, 300, function(){ return getUserRecord(email) || {}; }, ["misc"]);
   var role = rec.role || "analyst";
-  return { email: email, role: role, privileged: isPrivileged(role), displayName: rec.display_name || email.split("@")[0] };
+  // v4.4.2: listed = has a row in the users sheet. Anyone else can't use the dashboard.
+  return { email: email, role: role, privileged: isPrivileged(role), displayName: rec.display_name || email.split("@")[0], listed: !!rec.email };
 }
+
+// v4.4.2: shown on the sign-in screen to a Fetch account that isn't in the users sheet.
+var NOT_SET_UP_MSG = "You're not set up in the Productivity Suite yet. Ask your supervisor to add you.";
 
 function signIn(idToken) {
   var g = _verifyGoogleIdToken(idToken);
   if (g.error) return { authenticated: false, error: g.error };
   var c = _getCallerRecord(g.email);
+  if (!c.listed) { Logger.log("signIn refused, not in users sheet: " + g.email); return { authenticated: false, error: NOT_SET_UP_MSG }; }
   return { authenticated: true, email: c.email, role: c.role, isSupervisor: c.privileged, displayName: c.displayName, googleName: g.name, session: _issueSession(c.email) };
 }
 
@@ -395,6 +403,16 @@ function doGet(e) {
       var callerEmail = _verifySession(params.session);
       if (!callerEmail) return jsonResponse({ error: "AUTH_REQUIRED" });
       _caller = _getCallerRecord(callerEmail);
+      // v4.4.2: removed from the users sheet (or never added) = signed out;
+      // signing in again shows NOT_SET_UP_MSG.
+      if (!_caller.listed) return jsonResponse({ error: "AUTH_REQUIRED" });
+      // v4.4.2: an admin/supervisor previewing the analyst view gets exactly
+      // what an analyst would: their own rows only, no team or admin data.
+      // This can only ever lower access, never raise it.
+      if (params.viewAs === "analyst" && _caller.privileged) {
+        _caller = Object.assign({}, _caller, { role: "analyst", privileged: false, previewing: true });
+        if (action === "getAllUsers" || action === "getDigestRecipients") return jsonResponse([]);
+      }
       console.log("doGet " + action + " for " + callerEmail + " auth+user lookup " + (Date.now() - _reqStart) + "ms");
       if (action === "me") {
         return jsonResponse({ authenticated: true, email: _caller.email, role: _caller.role, isSupervisor: _caller.privileged, displayName: _caller.displayName });
@@ -823,13 +841,19 @@ function getTeamData(startDate, endDate, callerEmail) {
   var full = _getTeamDataFull(startDate, endDate);
   if (!full || full.error) return full;
   var c = (_caller && _caller.email === String(callerEmail || "").toLowerCase()) ? _caller : (callerEmail ? _getCallerRecord(String(callerEmail).toLowerCase()) : null);
+  // v4.4.1: overtime per person for the Team Directory cards, from the
+  // same (already scoped) entries the cards use.
+  function withOvertime(out) {
+    try { out.overtime = _computeOvertime(out.entries).byAnalyst; } catch(otErr) { Logger.log("team overtime: " + otErr); }
+    return out;
+  }
   if (c && c.privileged) {
     // v4.3.5: supervisors/admins only see analyst-role people (+ admin accounts).
-    return {
+    return withOvertime({
       assignments: (full.assignments || []).filter(function(a){ return _isVisibleToSupervisors(a.analyst_name); }),
       entries: (full.entries || []).filter(function(e){ return _isVisibleToSupervisors(e.analyst); }),
       cases: (full.cases || []).filter(function(x){ return _isVisibleToSupervisors(x.analyst); })
-    };
+    });
   }
 
   var myName = c ? c.displayName : "";
@@ -838,12 +862,12 @@ function getTeamData(startDate, endDate, callerEmail) {
   var teammateRoles = teamKey ? (full.assignments || [])
     .filter(function(a){ return (a.team_name || a.supervisor_email) === teamKey && (a.analyst_name === myName || _isVisibleToSupervisors(a.analyst_name)); })
     .map(function(a){ return { team_name: a.team_name, supervisor_email: a.supervisor_email, role: a.role }; }) : [];
-  return {
+  return withOvertime({
     assignments: mine,
     entries: (full.entries || []).filter(function(e){ return e.analyst === myName; }),
     cases: (full.cases || []).filter(function(c){ return c.analyst === myName; }),
     teammateRoles: teammateRoles
-  };
+  });
 }
 
 function _getTeamDataFull(startDate, endDate) {
@@ -1792,6 +1816,12 @@ function _digestGetPrivilegedNames() {
 // ============================================================
 var WORK_SCHEDULE_SOURCE_ID    = "";               // schedule spreadsheet ID, or "" for this one
 var WORK_SCHEDULE_SOURCE_SHEET = "work_schedules"; // tab name holding the grid
+// v4.4.2: the time zone the work_schedules hours are written in, for anyone
+// without their own "Time Zone" column value. It used to fall back to the
+// project's time zone (Eastern), which read the tab's Central hours an hour
+// early. The project time zone itself is left alone on purpose: changing it
+// can shift how existing dates in the sheet are read.
+var WORK_SCHEDULE_DEFAULT_TZ   = "America/Chicago";
 var _DAY_NAMES = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
 var _TZ_ALIASES = {
   eastern:"America/New_York", et:"America/New_York", est:"America/New_York", edt:"America/New_York",
@@ -1828,15 +1858,15 @@ function _parseScheduleCell(v) {
 
 function _resolveScheduleTz(s) {
   var t = String(s || "").trim();
-  if (!t) return Session.getScriptTimeZone();
+  if (!t) return WORK_SCHEDULE_DEFAULT_TZ;
   if (t.indexOf("/") !== -1) return t;
-  return _TZ_ALIASES[t.toLowerCase()] || Session.getScriptTimeZone();
+  return _TZ_ALIASES[t.toLowerCase()] || WORK_SCHEDULE_DEFAULT_TZ;
 }
 
 // { normName: { tz, days: { 0..6: "off" | [[s,e],...] } } } — keyed by full
 // name and by nickname + last name.
 function _getWorkSchedules() {
-  return cachedCall("work_sched_v441b", 300, function() {
+  return cachedCall("work_sched_v442c", 300, function() {
     var ss = WORK_SCHEDULE_SOURCE_ID ? SpreadsheetApp.openById(WORK_SCHEDULE_SOURCE_ID) : SpreadsheetApp.openById(SPREADSHEET_ID);
     var sh = ss.getSheetByName(WORK_SCHEDULE_SOURCE_SHEET);
     if (!sh || sh.getLastRow() < 2) return {};
@@ -2279,7 +2309,7 @@ function doPost(e) {
     // Dashboard mutation actions (updateTimeEntry, upsertUser, importCSV)
     if (payload.dashSecret === DASHBOARD_SECRET) {
       var postCaller = _verifySession(payload.session);
-      if (!postCaller) return jsonResponse({ error: "AUTH_REQUIRED" });
+      if (!postCaller || !_getCallerRecord(postCaller).listed) return jsonResponse({ error: "AUTH_REQUIRED" });
       payload.callerEmail = postCaller; // never trust an email sent by the page
       if (payload.action === "updateTimeEntry") {
         return jsonResponse(updateTimeEntryData(payload.id, payload.updates, payload.callerEmail));
@@ -2318,8 +2348,26 @@ function doPost(e) {
     if (payload.secret !== EXTENSION_SECRET) {
       return jsonResponse({ error: "Unauthorized" });
     }
+    // v4.4.2: who sent this, according to Google (see EXTENSION SIGN-IN)
+    var extAuth = _verifyExtensionToken(payload.auth);
+    if (EXT_AUTH_ENFORCE && !extAuth.ok) {
+      return jsonResponse({ error: "AUTH_REQUIRED", reason: extAuth.reason, authStatus: "invalid" });
+    }
+    payload._uploadedBy = _uploadStamp(extAuth);
+    payload._authStatus = extAuth.ok ? "ok" : (payload.auth ? "invalid" : "missing");
+    // v4.4.2: the verified account's name from the users sheet (the same
+    // display name the dashboard uses). It answers the extension's name
+    // lookup, and it wins over the name typed in Settings, so nobody can
+    // upload as someone else.
+    var accountName = extAuth.ok ? _accountName(extAuth.email) : "";
+    if (payload.kind === "whoami") {
+      if (!extAuth.ok) return jsonResponse({ whoami: "no_auth", authStatus: payload._authStatus, reason: extAuth.reason });
+      if (!accountName) return jsonResponse({ whoami: "not_found", email: extAuth.email, authStatus: "ok" });
+      return jsonResponse({ whoami: "ok", email: extAuth.email, name: accountName, authStatus: "ok" });
+    }
+    if (accountName) payload.analyst = accountName;
     if (payload.kind === "case") return handleCaseRow(payload);
-    if (payload.kind === "hireDate") return jsonResponse(getHireDateFor(payload.analyst));
+    if (payload.kind === "hireDate") { var hd = getHireDateFor(payload.analyst); hd.authStatus = payload._authStatus; return jsonResponse(hd); }
     var required = ["analyst","task","date","duration"];
     for (var i = 0; i < required.length; i++) {
       if (!payload[required[i]]) return jsonResponse({ error: "Missing field: " + required[i] });
@@ -2346,16 +2394,89 @@ function doPost(e) {
     // entry_source: extension 4.3+ sends "manual" for untracked-gap time the
     // analyst categorized after the fact. Normal tracked time omits it.
     var extRow = [maxId, payload.analyst, payload.project||"Fetch Rewards", payload.task, Number(payload.duration), payload.date, payload.category||"Work", payload.start_time||null, payload.end_time||null, null, null, null, sheetRowId];
-    if (payload.entry_source === "manual") {
-      ensureEntrySourceColumn(sheet);
-      extRow.push("manual");
-    }
+    ensureEntrySourceColumn(sheet);
+    extRow.push(payload.entry_source === "manual" ? "manual" : "");
+    // v4.4.2: column O = who uploaded it (verified email, or "unverified: …")
+    _ensureHeader(sheet, TE_UPLOADED_BY_COL, UPLOADED_BY_HEADER);
+    extRow.push(payload._uploadedBy || "");
     sheet.appendRow(extRow);
     SpreadsheetApp.flush(); // make the row visible to the next locked writer
     bumpCacheVersion("entries");
-    return jsonResponse({ success: true, id: maxId });
+    return jsonResponse({ success: true, id: maxId, authStatus: payload._authStatus });
     } finally { try { teLock.releaseLock(); } catch(le) {} }
   } catch(err) { return jsonResponse({ error: err.toString() }); }
+}
+
+// ============================================================
+// EXTENSION SIGN-IN (v4.4.2)
+// Each upload from the extension carries a Google access token from the
+// Fetch account Chrome is signed into (chrome.identity). The token is
+// checked with Google: it must be issued for OUR extension's OAuth client
+// and belong to a verified @fetchrewards.com account.
+//
+// PHASE 1 (EXT_AUTH_ENFORCE = false): nothing is ever rejected for sign-in.
+// Every row is stamped in its uploaded_by column with the verified email,
+// or "unverified: <reason>". Watch that column until "unverified" stops.
+// PHASE 2 (EXT_AUTH_ENFORCE = true): uploads without a verified Fetch
+// account are refused. The extension keeps them queued (they aren't lost)
+// and they send once that person's sign-in works. Set back to false to undo.
+//
+// Each token is checked with Google once and the answer cached until shortly
+// before it expires, so a busy day isn't one Google call per case.
+// ============================================================
+var EXT_AUTH_ENFORCE      = false;
+// The "Chrome extension" OAuth client ID(s) from Google Cloud Console.
+// Add one per extension ID (e.g. your unpacked test copy and the store copy).
+var EXT_OAUTH_CLIENT_IDS  = [
+  "422172167913-8vaevbjjn423edgpikduh9m8jaho8gck.apps.googleusercontent.com"
+];
+var UPLOADED_BY_HEADER    = "uploaded_by";
+var TE_UPLOADED_BY_COL    = 15; // time_entries column O
+var CASE_UPLOADED_BY_COL  = 11; // Cases column K
+
+// Returns { ok:true, email } or { ok:false, reason }.
+function _verifyExtensionToken(token) {
+  if (!token || typeof token !== "string") return { ok: false, reason: "no token" };
+  var key = "extTok:" + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token)).slice(0, 40);
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get(key);
+  if (hit) { try { return JSON.parse(hit); } catch(e) {} }
+  var out;
+  try {
+    var res = UrlFetchApp.fetch("https://oauth2.googleapis.com/tokeninfo?access_token=" + encodeURIComponent(token), { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) {
+      out = { ok: false, reason: "token rejected by Google" };
+    } else {
+      var info = JSON.parse(res.getContentText());
+      var client = String(info.azp || info.aud || "");
+      var email = String(info.email || "").toLowerCase();
+      if (EXT_OAUTH_CLIENT_IDS.indexOf(client) === -1) out = { ok: false, reason: "token not issued for this extension" };
+      else if (String(info.email_verified) !== "true") out = { ok: false, reason: "email not verified" };
+      else if ((email.split("@")[1] || "") !== ALLOWED_EMAIL_DOMAIN) out = { ok: false, reason: "not a Fetch account (" + email + ")" };
+      else out = { ok: true, email: email, ttl: Math.max(60, Math.min(3300, Number(info.expires_in || 0) - 60)) };
+    }
+  } catch (e) {
+    // Couldn't reach Google: don't cache, and don't treat it as a bad token.
+    return { ok: false, reason: "could not reach Google", transient: true };
+  }
+  try { cache.put(key, JSON.stringify(out), out.ok ? out.ttl : 300); } catch(e) {}
+  return out;
+}
+
+// v4.4.2: display name in the users sheet for a verified email, or "".
+function _accountName(email) {
+  var rec = cachedCall("userRecord:" + email, 300, function(){ return getUserRecord(email) || {}; }, ["misc"]) || {};
+  return String(rec.display_name || "").trim();
+}
+
+function _uploadStamp(auth) {
+  return auth.ok ? auth.email : ("unverified: " + auth.reason);
+}
+
+function _ensureHeader(sheet, col, name) {
+  if (sheet.getMaxColumns() < col) sheet.insertColumnsAfter(sheet.getMaxColumns(), col - sheet.getMaxColumns());
+  var h = sheet.getRange(1, col);
+  if (!h.getValue()) h.setValue(name);
 }
 
 function handleCaseRow(payload) {
@@ -2398,10 +2519,12 @@ function handleCaseRow(payload) {
     }
     var hs = (payload.handle_seconds===null||payload.handle_seconds===undefined)?'':payload.handle_seconds;
     var hm = hs===''?'':Math.round((hs/60)*100)/100;
-    sheet.appendRow([payload.date||'', payload.analyst||'', payload.platform||'', payload.case_id||'', payload.source||'', hs, hm, payload.solved_at||'', dedupeKey, payload.timing_method||'']);
+    // v4.4.2: column K = who uploaded it (verified email, or "unverified: …")
+    _ensureHeader(sheet, CASE_UPLOADED_BY_COL, UPLOADED_BY_HEADER);
+    sheet.appendRow([payload.date||'', payload.analyst||'', payload.platform||'', payload.case_id||'', payload.source||'', hs, hm, payload.solved_at||'', dedupeKey, payload.timing_method||'', payload._uploadedBy||'']);
     SpreadsheetApp.flush();
     bumpCacheVersion("cases");
-    return jsonResponse({ success: true });
+    return jsonResponse({ success: true, authStatus: payload._authStatus });
     } finally { try { caseLock.releaseLock(); } catch(le) {} }
   } catch(err) { return jsonResponse({ error: err.toString() }); }
 }
