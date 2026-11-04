@@ -6,6 +6,9 @@
 // The dashboard is hosted on GitHub Pages and calls this
 // endpoint via fetch() instead of google.script.run.
 // doPost is unchanged — extension sync still works as before.
+// v4.4.2: extension uploads are checked against the Fetch Google account
+// Chrome is signed into (see EXTENSION SIGN-IN below), and kind:'whoami'
+// returns the signed-in person's name for the extension's Settings.
 // ============================================================
 
 var SHEET_TIME_ENTRIES = "time_entries";
@@ -266,8 +269,13 @@ function corsHeaders() {
 }
 
 var _reqStartMs = null, _reqAction = "";
+var _extAuthReply = null; // v4.4.2: set per extension request, echoed back as authStatus
 function jsonResponse(data) {
   if (_reqStartMs) console.log("doGet " + _reqAction + " total " + (Date.now() - _reqStartMs) + "ms");
+  if (_extAuthReply && data && typeof data === "object" && !Array.isArray(data)) {
+    data.authStatus = _extAuthReply.status;
+    if (_extAuthReply.reason && !data.reason) data.reason = _extAuthReply.reason;
+  }
   return ContentService
     .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
@@ -347,14 +355,82 @@ function _verifyGoogleIdToken(idToken) {
 function _getCallerRecord(email) {
   var rec = cachedCall("userRecord:" + email, 300, function(){ return getUserRecord(email) || {}; }, ["misc"]);
   var role = rec.role || "analyst";
-  return { email: email, role: role, privileged: isPrivileged(role), displayName: rec.display_name || email.split("@")[0] };
+  // v4.4.2: listed = has a row in the users sheet. Anyone else can't use the dashboard.
+  return { email: email, role: role, privileged: isPrivileged(role), displayName: rec.display_name || email.split("@")[0], listed: !!rec.email };
 }
+
+// v4.4.2: shown on the sign-in screen to a Fetch account that isn't in the users sheet.
+var NOT_SET_UP_MSG = "You're not set up in the Productivity Suite yet. Ask your supervisor to add you.";
 
 function signIn(idToken) {
   var g = _verifyGoogleIdToken(idToken);
   if (g.error) return { authenticated: false, error: g.error };
   var c = _getCallerRecord(g.email);
+  if (!c.listed) { Logger.log("signIn refused, not in users sheet: " + g.email); return { authenticated: false, error: NOT_SET_UP_MSG }; }
   return { authenticated: true, email: c.email, role: c.role, isSupervisor: c.privileged, displayName: c.displayName, googleName: g.name, session: _issueSession(c.email) };
+}
+
+// ============================================================
+// EXTENSION SIGN-IN (v4.4.2)
+// The extension (4.4.2+) sends a Google access token for the Fetch account
+// Chrome is signed into, as payload.auth. Here we ask Google whether it's
+// real, issued to the extension's own client ID, and for a verified
+// @fetchrewards.com account. The result goes back as authStatus
+// ('ok' | 'missing' | 'invalid'), which the extension shows in Settings.
+//
+// When the token checks out, the name comes from the users sheet (the same
+// display name the dashboard uses), not from what the extension typed, so
+// nobody can upload time or cases as someone else.
+//
+// REQUIRE_EXTENSION_AUTH:
+//   false (now): uploads without a valid token are still accepted, so
+//                people still on 4.4.1 keep syncing.
+//   true (later): uploads without a valid token are refused. The extension
+//                keeps them in its retry queue until the person connects
+//                their account, so nothing is lost. Flip this only once
+//                everyone is on 4.4.2 and shows "Connected" in Settings,
+//                then deploy a new version.
+// ============================================================
+var EXTENSION_CLIENT_ID    = "422172167913-8vaevbjjn423edgpikduh9m8jaho8gck.apps.googleusercontent.com"; // manifest.json oauth2.client_id
+var REQUIRE_EXTENSION_AUTH = false;
+
+// Returns { status, email, name, reason }.
+function _checkExtensionAuth(token) {
+  if (!token || typeof token !== "string") return { status: "missing", reason: "Not signed in" };
+  var cache = CacheService.getScriptCache();
+  var key = "extTok:" + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token));
+  var hit = cache.get(key);
+  if (hit) { try { return JSON.parse(hit); } catch (e) {} }
+
+  var out;
+  try {
+    var res = UrlFetchApp.fetch("https://oauth2.googleapis.com/tokeninfo?access_token=" + encodeURIComponent(token), { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) {
+      out = { status: "invalid", reason: "Google could not verify the sign-in" };
+    } else {
+      var info = JSON.parse(res.getContentText());
+      var email = String(info.email || "").toLowerCase();
+      if (info.aud !== EXTENSION_CLIENT_ID && info.azp !== EXTENSION_CLIENT_ID) out = { status: "invalid", reason: "Sign-in was not issued for this extension" };
+      else if (String(info.email_verified) !== "true" || !email) out = { status: "invalid", reason: "Google account email is not verified" };
+      else if ((email.split("@")[1] || "") !== ALLOWED_EMAIL_DOMAIN) out = { status: "invalid", reason: "not a Fetch account" };
+      else {
+        var rec = cachedCall("userRecord:" + email, 300, function(){ return getUserRecord(email) || {}; }, ["misc"]) || {};
+        out = { status: "ok", email: email, name: String(rec.display_name || "").trim() };
+      }
+    }
+  } catch (err) {
+    return { status: "invalid", reason: "Could not check the sign-in right now" }; // not cached, try again next time
+  }
+  // Remember the answer briefly so every upload doesn't ask Google again.
+  try { cache.put(key, JSON.stringify(out), out.status === "ok" ? 600 : 120); } catch (e) {}
+  return out;
+}
+
+// kind:'whoami' — the signed-in person's name, for the extension's Settings.
+function _whoAmI(auth) {
+  if (auth.status !== "ok") return { whoami: "no_auth" };
+  if (!auth.name) return { whoami: "not_found", email: auth.email };
+  return { whoami: "ok", email: auth.email, name: auth.name };
 }
 
 // Analysts only ever get their own rows back.
@@ -371,6 +447,7 @@ function _scopeRows(rows) {
 // doGet — handles both dashboard data requests and ping
 // ============================================================
 function doGet(e) {
+  _extAuthReply = null; // extension-only field, never on dashboard replies
   var params = (e && e.parameter) ? e.parameter : {};
 
   // Ping check (used by extension)
@@ -395,6 +472,9 @@ function doGet(e) {
       var callerEmail = _verifySession(params.session);
       if (!callerEmail) return jsonResponse({ error: "AUTH_REQUIRED" });
       _caller = _getCallerRecord(callerEmail);
+      // v4.4.2: removed from the users sheet (or never added) = signed out;
+      // signing in again shows NOT_SET_UP_MSG.
+      if (!_caller.listed) return jsonResponse({ error: "AUTH_REQUIRED" });
       console.log("doGet " + action + " for " + callerEmail + " auth+user lookup " + (Date.now() - _reqStart) + "ms");
       if (action === "me") {
         return jsonResponse({ authenticated: true, email: _caller.email, role: _caller.role, isSupervisor: _caller.privileged, displayName: _caller.displayName });
@@ -2271,6 +2351,7 @@ function sendWeeklyDigest() {
 // doPost — extension sync + dashboard mutations
 // ============================================================
 function doPost(e) {
+  _extAuthReply = null;
   try {
     var payload;
     try { payload = JSON.parse(e.postData.contents); }
@@ -2279,7 +2360,7 @@ function doPost(e) {
     // Dashboard mutation actions (updateTimeEntry, upsertUser, importCSV)
     if (payload.dashSecret === DASHBOARD_SECRET) {
       var postCaller = _verifySession(payload.session);
-      if (!postCaller) return jsonResponse({ error: "AUTH_REQUIRED" });
+      if (!postCaller || !_getCallerRecord(postCaller).listed) return jsonResponse({ error: "AUTH_REQUIRED" });
       payload.callerEmail = postCaller; // never trust an email sent by the page
       if (payload.action === "updateTimeEntry") {
         return jsonResponse(updateTimeEntryData(payload.id, payload.updates, payload.callerEmail));
@@ -2318,6 +2399,16 @@ function doPost(e) {
     if (payload.secret !== EXTENSION_SECRET) {
       return jsonResponse({ error: "Unauthorized" });
     }
+    // v4.4.2: who sent this? (see EXTENSION SIGN-IN)
+    var extAuth = _checkExtensionAuth(payload.auth);
+    delete payload.auth; // never stored
+    _extAuthReply = { status: extAuth.status, reason: extAuth.reason || "" };
+    if (REQUIRE_EXTENSION_AUTH && extAuth.status !== "ok") {
+      return jsonResponse({ error: "Sign-in required: connect your Fetch Google account in the extension's Settings" });
+    }
+    if (payload.kind === "whoami") return jsonResponse(_whoAmI(extAuth));
+    // A verified account's own name wins over whatever was typed in Settings.
+    if (extAuth.status === "ok" && extAuth.name) payload.analyst = extAuth.name;
     if (payload.kind === "case") return handleCaseRow(payload);
     if (payload.kind === "hireDate") return jsonResponse(getHireDateFor(payload.analyst));
     var required = ["analyst","task","date","duration"];
