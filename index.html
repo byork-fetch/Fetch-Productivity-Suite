@@ -277,6 +277,7 @@ i.ra{background:hsl(265,55%,55%);} i.rs{background:hsl(180,80%,27%);}
     <header class="header">
       <div class="header-top">
         <div><h1>PI Productivity Suite</h1></div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:.6rem">
         <div class="header-actions">
           <button id="refreshBtn" class="btn btn-ghost" title="Refresh data" aria-label="Refresh data"><span class="refresh-icon">🔄</span></button>
           <button id="themeToggle" class="btn btn-ghost" title="Toggle theme">🌙</button>
@@ -285,8 +286,11 @@ i.ra{background:hsl(265,55%,55%);} i.rs{background:hsl(180,80%,27%);}
           <button id="userMgmtBtn" class="btn btn-ghost" style="display:none">⚙️ Users</button>
           <button id="signOutBtn" class="btn btn-ghost">👤 Sign Out</button>
         </div>
+        <button id="viewModeBtn" class="btn btn-ghost" style="display:none" title="Switch between your admin view and the view an analyst gets"></button>
+        </div>
       </div>
       <p class="header-greeting" id="headerGreeting"></p>
+      <p class="header-greeting" id="viewModeNote" style="display:none;font-weight:600"></p>
     </header>
 
     <div id="view-dashboard">
@@ -636,6 +640,7 @@ function apiGet(action, params) {
   if (Date.now() < _freshUntil) url += "&fresh=1";
   var tok = currentSessionToken();
   if (tok) url += "&session=" + encodeURIComponent(tok);
+  if (state && state.personalView) url += "&viewAs=analyst"; // v4.4.2: admin previewing the analyst view
   if (params) {
     Object.keys(params).forEach(function(k){ url += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(params[k]); });
   }
@@ -916,8 +921,29 @@ function waitForGSI(cb) {
   else setTimeout(function(){ waitForGSI(cb); }, 100);
 }
 
+// v4.4.2: admins and supervisors can preview the dashboard exactly as an
+// analyst sees it (their own data only, analyst controls only). The choice
+// lasts until this tab is closed. The server is told too (viewAs=analyst),
+// so it scopes the data the same way it does for a real analyst.
+var VIEW_MODE_KEY = "fps_personal_view";
+function readPersonalView(){ try { return sessionStorage.getItem(VIEW_MODE_KEY) === "1"; } catch(e){ return false; } }
+function setPersonalView(on){ try { if (on) sessionStorage.setItem(VIEW_MODE_KEY, "1"); else sessionStorage.removeItem(VIEW_MODE_KEY); } catch(e){} }
+function setupViewModeToggle(realUser){
+  var btn = document.getElementById("viewModeBtn"), note = document.getElementById("viewModeNote");
+  if (!btn || !realUser || !realUser.isSupervisor) return;
+  btn.style.display = "inline-flex";
+  btn.textContent = state.personalView ? "🛡️ Back to Admin View" : "👁️ Analyst View";
+  if (state.personalView && note) {
+    note.style.display = "block";
+    note.textContent = "Analyst view: you're seeing the dashboard the way an analyst does, with only your own data.";
+  }
+  btn.addEventListener("click", function(){ setPersonalView(!state.personalView); window.location.reload(); });
+}
+
 function bootWithUser(user) {
-  state.user = user;
+  state.realUser = user;
+  state.personalView = !!(user && user.isSupervisor && readPersonalView());
+  state.user = state.personalView ? Object.assign({}, user, { role: "analyst", isSupervisor: false }) : user;
   // v4.4.0: your own role and hire date set your pace target on the dashboard.
   apiGet("myAssignment").then(function(a){
     state.myAssignment = (a && !a.error) ? a : null;
@@ -927,6 +953,7 @@ function bootWithUser(user) {
   document.getElementById("app-loading").style.display = "none";
   document.getElementById("app").style.display = "block";
   setGreeting();
+  setupViewModeToggle(state.realUser);
   if (!state.user.isSupervisor && state.user.displayName) state.selectedAnalyst = state.user.displayName;
   else if (state._savedSelectedAnalyst) state.selectedAnalyst = state._savedSelectedAnalyst;
   // Case Trends and Idle Time Gaps are supervisor/admin views only.
