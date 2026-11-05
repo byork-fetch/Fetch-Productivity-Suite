@@ -59,7 +59,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .header-filters select{flex:1 1 180px;min-width:160px;}
 .btn{display:inline-flex;align-items:center;gap:.4rem;padding:.45rem 1rem;border-radius:.5rem;border:none;font-size:.85rem;font-weight:500;cursor:pointer;transition:all .2s;white-space:nowrap;}
 .btn-primary{background:var(--gradient-btn);color:#fff;}.btn-primary:hover{opacity:.88;}
-.btn-ghost{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);}.btn-ghost:hover{background:rgba(255,255,255,.25);}
+.btn-ghost{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);}
+.view-as-select{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);font-weight:500;max-width:260px;}
+.view-as-select option,.view-as-select optgroup{color:#222;background:#fff;}.btn-ghost:hover{background:rgba(255,255,255,.25);}
 .btn-outline{background:var(--card);color:var(--text);border:1px solid var(--border);}.btn-outline:hover{background:var(--muted-bg);}
 .btn-sm{padding:.3rem .7rem;font-size:.8rem;}.btn:disabled{opacity:.5;cursor:not-allowed;}
 #themeToggle{width:2.2rem;height:2.2rem;border-radius:.5rem;padding:0;justify-content:center;font-size:1.1rem;}
@@ -286,7 +288,7 @@ i.ra{background:hsl(265,55%,55%);} i.rs{background:hsl(180,80%,27%);}
           <button id="userMgmtBtn" class="btn btn-ghost" style="display:none">⚙️ Users</button>
           <button id="signOutBtn" class="btn btn-ghost">👤 Sign Out</button>
         </div>
-        <button id="viewModeBtn" class="btn btn-ghost" style="display:none" title="Switch between your admin view and the view an analyst gets"></button>
+        <select id="viewAsSelect" class="view-as-select" style="display:none" title="See the dashboard the way an analyst sees it" aria-label="View as"></select>
         </div>
       </div>
       <p class="header-greeting" id="headerGreeting"></p>
@@ -640,7 +642,13 @@ function apiGet(action, params) {
   if (Date.now() < _freshUntil) url += "&fresh=1";
   var tok = currentSessionToken();
   if (tok) url += "&session=" + encodeURIComponent(tok);
-  if (state && state.personalView) url += "&viewAs=analyst"; // v4.4.2: admin previewing the analyst view
+  // v4.4.2: admin previewing an analyst's view (their own, or a chosen analyst's)
+  var skipView = params && params._noViewAs;
+  if (skipView) { params = Object.assign({}, params); delete params._noViewAs; }
+  if (!skipView && state && state.personalView) {
+    url += "&viewAs=analyst";
+    if (state.viewAsName) url += "&viewAsName=" + encodeURIComponent(state.viewAsName);
+  }
   if (params) {
     Object.keys(params).forEach(function(k){ url += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(params[k]); });
   }
@@ -921,29 +929,63 @@ function waitForGSI(cb) {
   else setTimeout(function(){ waitForGSI(cb); }, 100);
 }
 
-// v4.4.2: admins and supervisors can preview the dashboard exactly as an
-// analyst sees it (their own data only, analyst controls only). The choice
-// lasts until this tab is closed. The server is told too (viewAs=analyst),
-// so it scopes the data the same way it does for a real analyst.
-var VIEW_MODE_KEY = "fps_personal_view";
-function readPersonalView(){ try { return sessionStorage.getItem(VIEW_MODE_KEY) === "1"; } catch(e){ return false; } }
-function setPersonalView(on){ try { if (on) sessionStorage.setItem(VIEW_MODE_KEY, "1"); else sessionStorage.removeItem(VIEW_MODE_KEY); } catch(e){} }
+// v4.4.2: admins and supervisors can see the dashboard exactly as an
+// analyst does: as themselves (their own data) or as a chosen analyst. The
+// server is told too (viewAs / viewAsName), so it sends exactly the data
+// that analyst would get. The choice lasts until this tab is closed.
+// Stored value: "" = admin view, "__self__" = myself, otherwise a name.
+var VIEW_MODE_KEY = "fps_view_as";
+var VIEW_AS_SELF = "__self__";
+function readViewAs(){ try { return sessionStorage.getItem(VIEW_MODE_KEY) || ""; } catch(e){ return ""; } }
+function writeViewAs(v){ try { if (v) sessionStorage.setItem(VIEW_MODE_KEY, v); else sessionStorage.removeItem(VIEW_MODE_KEY); } catch(e){} }
 function setupViewModeToggle(realUser){
-  var btn = document.getElementById("viewModeBtn"), note = document.getElementById("viewModeNote");
-  if (!btn || !realUser || !realUser.isSupervisor) return;
-  btn.style.display = "inline-flex";
-  btn.textContent = state.personalView ? "🛡️ Back to Admin View" : "👁️ Analyst View";
+  var sel = document.getElementById("viewAsSelect"), note = document.getElementById("viewModeNote");
+  if (!sel || !realUser || !realUser.isSupervisor) return;
+  var current = readViewAs();
+  function opt(value, label){ var o = document.createElement("option"); o.value = value; o.textContent = label; return o; }
+  function fill(names){
+    sel.innerHTML = "";
+    sel.appendChild(opt("", "🛡️ Admin view"));
+    sel.appendChild(opt(VIEW_AS_SELF, "👤 View as: Myself"));
+    var list = (names || []).slice();
+    if (current && current !== VIEW_AS_SELF && list.indexOf(current) === -1) list.push(current);
+    if (list.length) {
+      var g = document.createElement("optgroup"); g.label = "View as analyst";
+      list.sort(function(a,b){ return a.localeCompare(b); }).forEach(function(n){ g.appendChild(opt(n, "👁️ " + n)); });
+      sel.appendChild(g);
+    }
+    sel.value = current;
+  }
+  fill([]);
+  sel.style.display = "inline-block";
+  // Analysts from the users sheet (not admins/supervisors, not yourself).
+  apiGet("getAllUsers", { email: realUser.email, _noViewAs: 1 }).then(function(users){
+    if (!Array.isArray(users)) return;
+    var me = String(realUser.email || "").toLowerCase(), seen = {}, names = [];
+    users.forEach(function(u){
+      var role = String(u.role || "").toLowerCase().trim(), n = String(u.display_name || "").trim();
+      if (!n || role === "admin" || role === "supervisor" || String(u.email || "").toLowerCase() === me || seen[n]) return;
+      seen[n] = true; names.push(n);
+    });
+    fill(names);
+  }).catch(function(){});
   if (state.personalView && note) {
     note.style.display = "block";
-    note.textContent = "Analyst view: you're seeing the dashboard the way an analyst does, with only your own data.";
+    note.textContent = state.viewAsName
+      ? "Viewing as " + state.viewAsName + ": this is exactly what " + state.viewAsName + " sees on their dashboard."
+      : "Analyst view: you're seeing the dashboard the way an analyst does, with only your own data.";
   }
-  btn.addEventListener("click", function(){ setPersonalView(!state.personalView); window.location.reload(); });
+  sel.addEventListener("change", function(){ writeViewAs(sel.value); window.location.reload(); });
 }
 
 function bootWithUser(user) {
   state.realUser = user;
-  state.personalView = !!(user && user.isSupervisor && readPersonalView());
-  state.user = state.personalView ? Object.assign({}, user, { role: "analyst", isSupervisor: false }) : user;
+  var viewAs = (user && user.isSupervisor) ? readViewAs() : "";
+  state.personalView = !!viewAs;
+  state.viewAsName = (viewAs && viewAs !== VIEW_AS_SELF) ? viewAs : "";
+  state.user = state.personalView
+    ? Object.assign({}, user, { role: "analyst", isSupervisor: false }, state.viewAsName ? { displayName: state.viewAsName } : {})
+    : user;
   // v4.4.0: your own role and hire date set your pace target on the dashboard.
   apiGet("myAssignment").then(function(a){
     state.myAssignment = (a && !a.error) ? a : null;
