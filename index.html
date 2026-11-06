@@ -958,16 +958,10 @@ function setupViewModeToggle(realUser){
   }
   fill([]);
   sel.style.display = "inline-block";
-  // Analysts from the users sheet (not admins/supervisors, not yourself).
-  apiGet("getAllUsers", { email: realUser.email, _noViewAs: 1 }).then(function(users){
-    if (!Array.isArray(users)) return;
-    var me = String(realUser.email || "").toLowerCase(), seen = {}, names = [];
-    users.forEach(function(u){
-      var role = String(u.role || "").toLowerCase().trim(), n = String(u.display_name || "").trim();
-      if (!n || role === "admin" || role === "supervisor" || String(u.email || "").toLowerCase() === me || seen[n]) return;
-      seen[n] = true; names.push(n);
-    });
-    fill(names);
+  // Analysts the server lets you view as (team_assignments role Analyst or
+  // Senior Analyst, with a users-sheet row), so every name listed works.
+  apiGet("getViewAsNames", { _noViewAs: 1 }).then(function(names){
+    if (Array.isArray(names)) fill(names);
   }).catch(function(){});
   if (state.personalView && note) {
     note.style.display = "block";
