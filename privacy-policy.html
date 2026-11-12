@@ -11,7 +11,7 @@ h2 { margin-top: 1.8em; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
 </head>
 <body>
 <h1>Privacy Policy for Fetch Productivity Suite</h1>
-<p><strong>Last updated:</strong> July 2026
+<p><strong>Last updated:</strong> November 2026
 <strong>Maintained by:</strong> Fetch Rewards Fraud Operations</p>
 <hr />
 <h2>What this extension does</h2>
@@ -20,36 +20,38 @@ h2 { margin-top: 1.8em; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
 <h2>What data is collected</h2>
 <p>The extension collects the following data:</p>
 <ul>
-<li><strong>Analyst display name</strong> — entered manually by the analyst in the extension settings</li>
-<li><strong>Time tracking data</strong> — task name, duration, start time, and end time for work sessions</li>
-<li><strong>Fraud case activity</strong> — case IDs, platform (Kount, Zendesk, or RADAR), and handle time for cases reviewed during a session</li>
+<li><strong>Fetch Google account email address</strong>: read when the analyst connects their Fetch Google Workspace account, and used only to confirm which employee submitted each record</li>
+<li><strong>Analyst display name</strong>: entered by the analyst in the extension settings, or filled in automatically from the team roster once their Fetch account is connected</li>
+<li><strong>Time tracking data</strong>: activity name, duration, start time, and end time for work sessions</li>
+<li><strong>Scheduled shift hours and days off</strong>: entered by the analyst, and used for shift-end alerts and overtime calculations</li>
+<li><strong>Fraud case activity</strong>: case or ticket IDs, platform (Kount, Dispute Review in Zendesk, or Vector Review in Zendesk), Kount event type (Fraud Platform or Review), and handle time for cases reviewed during a session</li>
 <li><strong>Date and timestamp</strong> of each activity</li>
-<li><strong>Sync/connection status</strong> — used only to confirm data successfully reached the internal backend</li>
+<li><strong>Sync/connection status</strong>: used only to confirm data successfully reached the internal backend</li>
 </ul>
 <hr />
 <h2>What data is NOT collected</h2>
 <ul>
-<li>Passwords or login credentials</li>
-<li>Browsing history outside of the specific fraud review platforms (Kount, Zendesk, RADAR)</li>
-<li>Personal information beyond the analyst's display name</li>
+<li>Passwords or login credentials (Google sign-in is handled by Chrome and Google; the extension never sees the analyst's password)</li>
+<li>Any Google account data other than the email address: no contacts, files, mail, or calendar</li>
+<li>Browsing history: the extension only recognizes the work sites it tracks time for (the fraud review platforms, the team dashboard, and approved training and work tools) and records the activity name, not page addresses</li>
 <li>Financial information</li>
 <li>Location data</li>
 <li>Health information</li>
-<li>Web browsing activity unrelated to the platforms above</li>
 </ul>
 <hr />
 <h2>How data is used</h2>
 <p>All collected data is used solely for internal workforce productivity reporting within Fetch Rewards. Specifically:</p>
 <ul>
-<li>Time tracking data is used to generate productivity reports for fraud analysts and their supervisors</li>
+<li>Time tracking and shift data are used to generate productivity and overtime reports for fraud analysts and their supervisors</li>
 <li>Case activity data is used to calculate average handle time and case volume metrics</li>
+<li>The email address is used to verify that each record came from the employee it says it came from</li>
 <li>Sync status data is used only to alert the analyst or admin to connection issues</li>
 <li>No data is sold, shared with third parties, or used for advertising</li>
 <li>No data is used to determine creditworthiness or for lending purposes</li>
 </ul>
 <hr />
 <h2>Where data is stored</h2>
-<p>Data is transmitted over HTTPS to a Google Apps Script endpoint and stored in a Google Sheet accessible only to authorized Fetch Rewards Fraud Operations team members. All data is stored within Google's infrastructure. A local JSON backup option is also available to the analyst as a manual recovery mechanism in case of sync failure; this backup is downloaded to the analyst's own device and is not transmitted elsewhere.</p>
+<p>Data is transmitted over HTTPS to a Google Apps Script endpoint and stored in a Google Sheet accessible only to authorized Fetch Rewards Fraud Operations team members. All data is stored within Google's infrastructure. Some working data is kept only in the analyst's own browser (for example, in-progress timers, settings, and saves waiting to sync) so nothing is lost on a page refresh. A local JSON backup option is also available to the analyst as a manual recovery mechanism in case of sync failure; this backup is downloaded to the analyst's own device and is not transmitted elsewhere.</p>
 <hr />
 <h2>Who has access</h2>
 <p>Only Fetch Rewards Fraud Operations team members with explicit access to the internal Google Sheet can view collected data. Access is managed by the Fraud Operations team administrator. Within the extension's dashboard, analysts can only view their own data; supervisors and admins can view data for the full team.</p>
@@ -59,13 +61,14 @@ h2 { margin-top: 1.8em; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
 <hr />
 <h2>Permissions this extension uses, and why</h2>
 <ul>
-<li><strong>activeTab / tabs</strong> — to detect which fraud platform (Zendesk, Kount, RADAR) tab is currently active, so time tracking applies to the correct task</li>
-<li><strong>scripting</strong> — to read case and activity information directly from the Zendesk, Kount, and RADAR pages the analyst is already working in</li>
-<li><strong>storage</strong> — to save time-tracking state locally so an in-progress session isn't lost on a page refresh</li>
-<li><strong>alarms</strong> — to periodically check sync status and refresh timers in the background</li>
-<li><strong>notifications</strong> — to alert the analyst locally if a sync fails and needs attention</li>
-<li><strong>downloads</strong> — to allow the analyst to save a local JSON backup of their tracked data as a manual recovery option</li>
-<li><strong>Host permissions</strong> (Zendesk, Kount, RADAR, script.google.com) — required so the extension can read case data from those specific fraud platforms and sync it to the internal Google Sheet backend. No other websites are accessed.</li>
+<li><strong>tabs</strong>: to detect which work tab is currently active, so time tracking applies to the correct task</li>
+<li><strong>storage</strong>: to save time-tracking state, settings, and unsent records locally so an in-progress session isn't lost on a page refresh</li>
+<li><strong>alarms</strong>: to periodically check sync status and refresh timers in the background</li>
+<li><strong>notifications</strong>: to alert the analyst locally for shift, break, and lunch reminders, and if a sync fails and needs attention</li>
+<li><strong>downloads</strong>: to allow the analyst to save a local JSON backup of their tracked data as a manual recovery option</li>
+<li><strong>idle</strong>: to notice when the computer is idle or locked, so time isn't counted while the analyst is away</li>
+<li><strong>identity</strong>: to sign the analyst in with their Fetch Google Workspace account (email scope only) so the backend can verify who submitted each record</li>
+<li><strong>Host permissions</strong> (Zendesk, Kount, script.google.com): required so the extension can read case data from those specific fraud platforms and sync it to the internal Google Sheet backend. No other websites' content is read.</li>
 </ul>
 <p>This extension does not use remote code execution; all logic ships within the extension package itself.</p>
 <hr />
