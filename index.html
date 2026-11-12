@@ -254,6 +254,10 @@ i.ra{background:hsl(265,55%,55%);} i.rs{background:hsl(180,80%,27%);}
 .role-aht-bar b{position:absolute;top:-2px;width:2px;height:9px;background:var(--text);}
 .role-aht-msg{font-size:.8rem;color:var(--text-muted);line-height:1.4;margin:.3rem 0;}
 .role-aht-link{font:inherit;font-size:.78rem;font-weight:600;color:hsl(265,55%,48%);background:none;border:none;padding:.4rem 0;cursor:pointer;text-decoration:underline;min-height:32px;}
+/* v4.4.2: Kount event type, FP (Fraud Platform) / R (Review) */
+.kt{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-weight:700;margin-right:.2rem;}
+.kt-fp{color:hsl(6,63%,46%);} .kt-r{color:hsl(220,80%,50%);}
+.dark .kt-fp{color:hsl(6,80%,68%);} .dark .kt-r{color:hsl(220,85%,72%);}
 </style>
 </head>
 <body>
@@ -420,6 +424,7 @@ i.ra{background:hsl(265,55%,55%);} i.rs{background:hsl(180,80%,27%);}
             <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
               <select id="caseLogAnalystFilterSelect" class="form-select" style="width:auto"><option value="all">All Analysts</option></select>
               <select id="caseSourceFilterSelect" class="form-select" style="width:auto"><option value="all">All Sources</option></select>
+              <select id="caseKountTypeFilterSelect" class="form-select" style="width:auto;display:none" title="Kount event type"><option value="all">All Kount Types</option><option value="FP">FP: Fraud Platform</option><option value="R">R: Review</option><option value="untagged">Untagged (before 4.4.2)</option></select>
               <input type="text" id="caseSearchInput" class="date-input" placeholder="Search Case ID…" style="width:160px"/>
               <button class="btn btn-outline btn-sm" id="caseOverTargetBtn" type="button" onclick="toggleCaseOverTarget()" aria-pressed="false">Over target only</button>
               <button class="btn btn-outline btn-sm" onclick="exportCaseLogCSV()">⬇ Export CSV</button>
@@ -760,7 +765,7 @@ var state = {
   user:null, entries:[], allRangeEntries:[], allRangeCases:[], allPriorRangeCases:[], cases:[],
   selectedAnalyst:"all", sortField:"date", sortDir:"desc",
   caseSortField:"date", caseSortDir:"desc", editEntry:null,
-  casePlatformFilter:"all", caseSourceFilter:"all", caseLogAnalystFilter:"all",
+  casePlatformFilter:"all", caseSourceFilter:"all", caseLogAnalystFilter:"all", caseKountTypeFilter:"all",
   periodMode:"week", periodCustomStart:null, periodCustomEnd:null, periodLoading:false,
   teamData:{ assignments:[], entries:[], cases:[] }, selectedSupervisor:null, selectedRole:null, teamSortMode:"name",
   assignments:[], analystTeamMap:{}, analystRoleMap:{}, hiddenAssignmentNames:{},
@@ -788,6 +793,7 @@ function loadFilterPrefs(){
     if (p.periodCustomEnd) state.periodCustomEnd = p.periodCustomEnd;
     if (p.casePlatformFilter) state.casePlatformFilter = (p.casePlatformFilter === "Zendesk" ? "Dispute Review" : p.casePlatformFilter);
     if (p.caseSourceFilter) state.caseSourceFilter = p.caseSourceFilter;
+    if (p.caseKountTypeFilter && ["all","FP","R","untagged"].indexOf(p.caseKountTypeFilter)!==-1) state.caseKountTypeFilter = p.caseKountTypeFilter;
     if (p.caseLogAnalystFilter) state.caseLogAnalystFilter = p.caseLogAnalystFilter;
     if (p.caseSearchQuery) state.caseSearchQuery = p.caseSearchQuery;
     if (p.timeLogAnalystFilter) state.timeLogAnalystFilter = p.timeLogAnalystFilter;
@@ -807,6 +813,7 @@ function persistFilterPrefs(){
       periodCustomEnd: state.periodCustomEnd,
       casePlatformFilter: state.casePlatformFilter,
       caseSourceFilter: state.caseSourceFilter,
+      caseKountTypeFilter: state.caseKountTypeFilter,
       caseLogAnalystFilter: state.caseLogAnalystFilter,
       caseSearchQuery: state.caseSearchQuery,
       timeLogAnalystFilter: state.timeLogAnalystFilter,
@@ -1026,6 +1033,7 @@ function bootWithUser(user) {
   document.getElementById("caseSearchInput").value = state.caseSearchQuery || "";
   document.getElementById("caseSearchInput").addEventListener("input", function(){ state.caseSearchQuery=this.value; persistFilterPrefs(); renderCaseLog(); });
   document.getElementById("caseSourceFilterSelect").addEventListener("change", function(){ state.caseSourceFilter=this.value; persistFilterPrefs(); renderCaseLog(); });
+  document.getElementById("caseKountTypeFilterSelect").addEventListener("change", function(){ state.caseKountTypeFilter=this.value; persistFilterPrefs(); renderCaseLog(); });
   document.getElementById("caseLogAnalystFilterSelect").addEventListener("change", function(){ state.caseLogAnalystFilter=this.value; persistFilterPrefs(); renderCaseLog(); });
   document.getElementById("teamSortSelect").addEventListener("change", function(){ state.teamSortMode=this.value; renderTeamContent(state.teamData); });
   document.getElementById("signOutBtn").addEventListener("click", function(){
@@ -1252,6 +1260,7 @@ function applyCaseFilter() {
   state.cases = filterCasesForCurrentScope(state.allRangeCases);
   state.priorCases = filterCasesForCurrentScope(state.allPriorRangeCases||[]);
   updateCaseSourceFilterOptions();
+  updateCaseKountTypeFilterOptions(); // v4.4.2
   updateCaseLogAnalystFilterOptions();
   renderCasePlatformFilterRow(); // v4.3.9: RADAR button depends on the range
   renderCaseStats(); renderCaseChart(); renderCaseAnalystTable(); renderCaseLog();
@@ -1344,10 +1353,21 @@ function renderWow(){
   group("Cases");
   row("All cases", L.c.length, T.c.length, n, "count", totalsBetter);
   ["Kount","Dispute Review","Vector Review"].forEach(function(p){ row(p, plat(L.c,p).length, plat(T.c,p).length, n, "count", totalsBetter); });
+  // v4.4.2: Kount FP / R, once either week has tagged cases.
+  var ksT = kountTypeSplit(T.c), ksL = kountTypeSplit(L.c);
+  var wowTagged = (ksT.fp + ksT.r + ksL.fp + ksL.r) > 0;
+  if (wowTagged) {
+    row('&nbsp;&nbsp;Kount <span class="kt kt-fp">FP</span>', ksL.fp, ksT.fp, n, "count", null);
+    row('&nbsp;&nbsp;Kount <span class="kt kt-r">R</span>', ksL.r, ksT.r, n, "count", null);
+  }
   var dT = days(T.c), dL = days(L.c);
   row("Cases per day worked", dL ? Math.round(L.c.length/dL) : null, dT ? Math.round(T.c.length/dT) : null, n, "count", "up");
   group("Handle time (AHT)");
   ["Kount","Dispute Review","Vector Review"].forEach(function(p){ row(p, ahtFromCases(plat(L.c,p)).avgSec, ahtFromCases(plat(T.c,p)).avgSec, sec, "secs", "down"); });
+  if (wowTagged) {
+    row('&nbsp;&nbsp;Kount <span class="kt kt-fp">FP</span>', ahtFromCases(ksL.fpCases).avgSec, ahtFromCases(ksT.fpCases).avgSec, sec, "secs", "down");
+    row('&nbsp;&nbsp;Kount <span class="kt kt-r">R</span>', ahtFromCases(ksL.rCases).avgSec, ahtFromCases(ksT.rCases).avgSec, sec, "secs", "down");
+  }
   row("Under pace target", underPct(L.c), underPct(T.c), pct, "pct", "up");
   group("Time");
   row("Utilization", uL.totalSecs ? uL.util : null, uT.totalSecs ? uT.util : null, pct, "pct", "up");
@@ -1428,6 +1448,20 @@ function updateCaseSourceFilterOptions(){
   sel.value = keep;
 }
 
+// v4.4.2: the Kount type filter shows once the period has tagged Kount
+// cases (or a type is already picked, so it can be switched back).
+function updateCaseKountTypeFilterOptions(){
+  var sel = document.getElementById("caseKountTypeFilterSelect");
+  if (!sel) return;
+  var sp = kountTypeSplit(state.cases);
+  var show = (sp.fp + sp.r) > 0 || state.caseKountTypeFilter !== "all";
+  sel.style.display = show ? "" : "none";
+  sel.options[1].textContent = "FP: Fraud Platform (" + sp.fp + ")";
+  sel.options[2].textContent = "R: Review (" + sp.r + ")";
+  sel.options[3].textContent = "Untagged (" + sp.untagged + ")";
+  sel.value = state.caseKountTypeFilter || "all";
+}
+
 function updateCaseLogAnalystFilterOptions(){
   var sel = document.getElementById("caseLogAnalystFilterSelect");
   if (!sel) return;
@@ -1494,9 +1528,17 @@ function renderCaseStats() {
     if (bulk) parts.push(bulk+" bulk-marked");
     return parts.join(" · ");
   }
+  // v4.4.2: FP / R split for Kount, shown once the period has tagged cases.
+  var ks=kountTypeSplit(kc), kTagged=(ks.fp+ks.r)>0;
+  var kCountTxt="Kount "+kc.length+(kTagged?" (FP "+ks.fp+" · R "+ks.r+")":"");
+  var kAhtSub=ahtSub(ka,kBulk);
+  if (kTagged) {
+    var fa=ahtFromCases(ks.fpCases), raK=ahtFromCases(ks.rCases);
+    kAhtSub+='<br><span class="kt kt-fp">FP</span>'+fmtSeconds(fa.avgSec)+(fa.count?' ('+fa.count+')':'')+' · <span class="kt kt-r">R</span>'+fmtSeconds(raK.avgSec)+(raK.count?' ('+raK.count+')':'');
+  }
   var cards=[
-    {label:"Cases ("+periodLabel()+")",value:String(inRange.length)+deltaBadge(inRange.length,prior.length,null),sub:"Kount "+kc.length+" · Dispute Review "+zc.length+(rc.length?" · RADAR "+rc.length:"")+(vc.length?" · Vector Review "+vc.length:"")+" · vs. prior period: "+prior.length},
-    {label:"Kount AHT",value:fmtSeconds(ka.avgSec)+deltaBadge(ka.avgSec,pka.avgSec,true),sub:ahtSub(ka,kBulk)},
+    {label:"Cases ("+periodLabel()+")",value:String(inRange.length)+deltaBadge(inRange.length,prior.length,null),sub:kCountTxt+" · Dispute Review "+zc.length+(rc.length?" · RADAR "+rc.length:"")+(vc.length?" · Vector Review "+vc.length:"")+" · vs. prior period: "+prior.length},
+    {label:"Kount AHT",value:fmtSeconds(ka.avgSec)+deltaBadge(ka.avgSec,pka.avgSec,true),sub:kAhtSub},
     {label:"Dispute Review AHT",value:fmtSeconds(za.avgSec)+deltaBadge(za.avgSec,pza.avgSec,true),sub:ahtSub(za,zBulk)},
     {label:"Vector Review AHT",value:fmtSeconds(va.avgSec)+deltaBadge(va.avgSec,pva.avgSec,true),sub:ahtSub(va,0)}
   ];
@@ -1763,7 +1805,10 @@ function renderCaseAnalystTable() {
   // v4.4.0: share of each analyst's timed cases at or under their pace target.
   var paceBy={};
   state.cases.forEach(function(c){var p=casePace(c);if(!p)return;var k=c.analyst||"Unknown";if(!paceBy[k])paceBy[k]={t:0,u:0};paceBy[k].t++;if(p.band!=="red")paceBy[k].u++;});
-  document.getElementById("caseAnalystTable").innerHTML=rows.length===0?'<div class="empty">No cases for this period</div>':rows.map(function(r){var pb=paceBy[r.name];var pct=pb&&pb.t?'<span class="pace-pct">'+Math.round(pb.u/pb.t*100)+'% under target</span>':'';return '<div class="analyst-row"><span class="analyst-name">'+esc(r.name)+'</span><span class="case-stack"><span class="count">'+r.count+' case'+(r.count===1?"":"s")+'</span><span class="aht">AHT: '+fmtSeconds(r.avgSec)+'</span>'+pct+'</span></div>';}).join("");
+  // v4.4.2: each analyst's Kount FP / R counts, when they have tagged cases.
+  var ktBy={};
+  state.cases.forEach(function(c){var t=kountType(c);if(!t)return;var k=c.analyst||"Unknown";if(!ktBy[k])ktBy[k]={FP:0,R:0};ktBy[k][t]++;});
+  document.getElementById("caseAnalystTable").innerHTML=rows.length===0?'<div class="empty">No cases for this period</div>':rows.map(function(r){var pb=paceBy[r.name];var pct=pb&&pb.t?'<span class="pace-pct">'+Math.round(pb.u/pb.t*100)+'% under target</span>':'';var kt=ktBy[r.name];var ktTxt=kt?'<span class="pace-pct">Kount <span class="kt kt-fp">FP</span>'+kt.FP+' · <span class="kt kt-r">R</span>'+kt.R+'</span>':'';return '<div class="analyst-row"><span class="analyst-name">'+esc(r.name)+'</span><span class="case-stack"><span class="count">'+r.count+' case'+(r.count===1?"":"s")+'</span><span class="aht">AHT: '+fmtSeconds(r.avgSec)+'</span>'+pct+ktTxt+'</span></div>';}).join("");
 }
 
 function renderCasePlatformFilterRow() {
@@ -1809,8 +1854,19 @@ function getFilteredCaseLogRows(){
   var filtered = state.casePlatformFilter === "all" ? state.cases : state.cases.filter(function(c){ return c.platform === state.casePlatformFilter; });
   if (state.caseLogAnalystFilter !== "all") filtered = filtered.filter(function(c){ return c.analyst === state.caseLogAnalystFilter; });
   if (state.caseSourceFilter !== "all") filtered = filtered.filter(function(c){ return c.source === state.caseSourceFilter; });
+  // v4.4.2: Kount event type (FP / R / untagged)
+  if (state.caseKountTypeFilter && state.caseKountTypeFilter !== "all") filtered = filtered.filter(function(c){
+    if (c.platform !== "Kount") return false;
+    var t = kountType(c);
+    return state.caseKountTypeFilter === "untagged" ? !t : t === state.caseKountTypeFilter;
+  });
   var q = (state.caseSearchQuery||"").trim().toLowerCase();
-  if (q) filtered = filtered.filter(function(c){ return String(c.case_id||"").toLowerCase().indexOf(q)!==-1; });
+  // v4.4.2: the search also matches the tag, so "FP:" finds every FP case.
+  if (q) filtered = filtered.filter(function(c){
+    var id = String(c.case_id||""), t = kountType(c);
+    var forms = t ? [id, t + ": " + id, t + ":" + id] : [id];
+    return forms.some(function(f){ return f.toLowerCase().indexOf(q) !== -1; });
+  });
   if (state.caseOverTargetOnly) filtered = filtered.filter(function(c){ var p = casePace(c); return p && p.band === "red"; });
   return filtered;
 }
@@ -1841,6 +1897,39 @@ function caseIdHtml(platform, id) {
   return '<a href="'+esc(url)+'" target="_blank" rel="noopener" class="case-link" title="Open in '+esc(platform)+'">'+esc(id)+'</a>';
 }
 
+// ============================================================
+// v4.4.2: KOUNT EVENT TYPE (FP / R)
+// The extension tags each Kount 360 case as FP (Fraud Platform: channel
+// FRAUD_PLATFORM_PROD and a "Fraud Platform Review" policy) or R (Review:
+// everything else). The tag is the first part of the case's Source, e.g.
+// "FP:K360-composed:Save", so no backend change is needed. Cases saved
+// before the update (or on Kount classic) have no tag.
+// ============================================================
+var KOUNT_TYPE_LABEL = { FP: "Fraud Platform", R: "Review" };
+function kountType(c){
+  if (!c || c.platform !== "Kount") return null;
+  var m = /^(FP|R):/.exec(String(c.source || ""));
+  return m ? m[1] : null;
+}
+// "FP: ABC123" in the Case ID column (the ID part stays a link).
+function caseIdCellHtml(c){
+  var t = kountType(c);
+  var tag = t ? '<span class="kt kt-'+t.toLowerCase()+'" data-tooltip="'+KOUNT_TYPE_LABEL[t]+'">'+t+':</span>' : '';
+  return tag + caseIdHtml(c.platform, c.case_id);
+}
+// { fp, r, untagged, fpCases, rCases } for a list's Kount cases.
+function kountTypeSplit(cases){
+  var out = { fp:0, r:0, untagged:0, fpCases:[], rCases:[] };
+  (cases||[]).forEach(function(c){
+    if (c.platform !== "Kount") return;
+    var t = kountType(c);
+    if (t === "FP") { out.fp++; out.fpCases.push(c); }
+    else if (t === "R") { out.r++; out.rCases.push(c); }
+    else out.untagged++;
+  });
+  return out;
+}
+
 function renderCaseLog() {
   var filtered = getFilteredCaseLogRows();
   var sorted=filtered.slice().sort(function(a,b){var f=state.caseSortField,dir=state.caseSortDir==="asc"?1:-1,av=a[f],bv=b[f];if(typeof av==="number"||typeof bv==="number")return((av||0)-(bv||0))*dir;return String(av||"").localeCompare(String(bv||""))*dir;});
@@ -1854,15 +1943,15 @@ function renderCaseLog() {
       var title = flag.dir==="high" ? (flag.times+"x the platform average — much slower than usual") : (flag.times+"x the platform average — much faster than usual");
       flagBadge = ' <span data-tooltip="'+esc(title)+'" style="display:inline-block;width:.5rem;height:.5rem;border-radius:50%;background:'+color+';margin-left:.4rem;vertical-align:middle"></span>';
     }
-    return '<tr><td>'+esc(c.date)+'</td><td>'+esc(c.analyst)+'</td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+caseIdHtml(c.platform, c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+flagBadge+'</td></tr>';
+    return '<tr><td>'+esc(c.date)+'</td><td>'+esc(c.analyst)+'</td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+caseIdCellHtml(c)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+flagBadge+'</td></tr>';
   }).join("");
 }
 
 function exportCaseLogCSV(){
   var filtered = getFilteredCaseLogRows();
   if (!filtered.length) { toast("error","No cases to export"); return; }
-  var headers=["Date","Analyst","Platform","Case ID","Link","Source","Handle Time (seconds)","Handle Time"];
-  var rows=filtered.map(function(c){return [c.date,c.analyst,c.platform,c.case_id,caseUrl(c.platform,c.case_id),c.source||"",c.handle_seconds!=null?c.handle_seconds:"",fmtHandleTime(c)];});
+  var headers=["Date","Analyst","Platform","Kount Type","Case ID","Link","Source","Handle Time (seconds)","Handle Time"];
+  var rows=filtered.map(function(c){return [c.date,c.analyst,c.platform,kountType(c)||"",c.case_id,caseUrl(c.platform,c.case_id),c.source||"",c.handle_seconds!=null?c.handle_seconds:"",fmtHandleTime(c)];});
   var csv=[headers,...rows].map(function(r){return r.map(function(v){v=String(v||"");return v.includes(",")||v.includes('"')?'"'+v.replace(/"/g,'""')+'"':v;}).join(",");}).join("\n");
   var b = getPeriodBounds();
   var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="case_log_"+b.start+"_to_"+b.end+".csv";a.click();
@@ -2810,7 +2899,7 @@ function renderQuickViewTable() {
     head = '<tr><th>Date</th><th>Analyst</th><th>Platform</th><th>Case ID</th><th>Source</th><th style="text-align:right">Handle Time</th></tr>';
     body = cases.length===0 ? '<tr><td colspan="6" class="empty">No cases match filters</td></tr>' : cases.map(function(c){
       var pc = c.platform==='Kount'?'badge-kount':c.platform==='Dispute Review'?'badge-zendesk':c.platform==='RADAR'?'badge-radar':c.platform==='Vector Review'?'badge-vector':'';
-      return '<tr><td>'+esc(c.date)+'</td><td><span class="badge">'+esc(c.analyst)+'</span></td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+caseIdHtml(c.platform, c.case_id)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+'</td></tr>';
+      return '<tr><td>'+esc(c.date)+'</td><td><span class="badge">'+esc(c.analyst)+'</span></td><td><span class="badge '+pc+'">'+esc(c.platform)+'</span></td><td style="font-family:monospace;font-size:.8rem">'+caseIdCellHtml(c)+'</td><td style="color:var(--text-muted);font-size:.78rem">'+esc(c.source||"–")+'</td><td style="text-align:right;font-weight:600">'+renderHandleTimeCell(c)+'</td></tr>';
     }).join("");
     document.getElementById("quickViewMeta").textContent=(state.quickViewAnalyst?state.quickViewAnalyst+" · ":"")+cases.length+" case"+(cases.length===1?"":"s");
   } else {
@@ -2876,8 +2965,8 @@ function getFilteredExportCases(){
 function exportCasesCSV(){
   var cases=getFilteredExportCases();if(!cases.length){toast("error","No cases to export");return;}
   cases=cases.slice().sort(function(a,b){return String(a.date).localeCompare(String(b.date))||String(a.solved_at||"").localeCompare(String(b.solved_at||""));});
-  var headers=["Date","Analyst","Platform","Case ID","Link","Handle (seconds)","Handle Time","Timing Method","Solved At","Source"];
-  var rows=cases.map(function(c){var hs=(typeof c.handle_seconds==="number"&&c.handle_seconds>0)?c.handle_seconds:"";return[c.date,c.analyst,c.platform,c.case_id,caseUrl(c.platform,c.case_id),hs,hs===""?"":fmtSeconds(hs),c.timing_method||"",c.solved_at||"",c.source||""];});
+  var headers=["Date","Analyst","Platform","Kount Type","Case ID","Link","Handle (seconds)","Handle Time","Timing Method","Solved At","Source"];
+  var rows=cases.map(function(c){var hs=(typeof c.handle_seconds==="number"&&c.handle_seconds>0)?c.handle_seconds:"";return[c.date,c.analyst,c.platform,kountType(c)||"",c.case_id,caseUrl(c.platform,c.case_id),hs,hs===""?"":fmtSeconds(hs),c.timing_method||"",c.solved_at||"",c.source||""];});
   var csv=[headers].concat(rows).map(function(r){return r.map(function(v){v=String(v==null?"":v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(",");}).join("\n");
   var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="cases_"+document.getElementById("teamStartDate").value+"_to_"+document.getElementById("teamEndDate").value+".csv";a.click();
   toast("success","Exported "+cases.length+" cases");
