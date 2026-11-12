@@ -256,8 +256,8 @@ i.ra{background:hsl(265,55%,55%);} i.rs{background:hsl(180,80%,27%);}
 .role-aht-link{font:inherit;font-size:.78rem;font-weight:600;color:hsl(265,55%,48%);background:none;border:none;padding:.4rem 0;cursor:pointer;text-decoration:underline;min-height:32px;}
 /* v4.4.2: Kount event type, FP (Fraud Platform) / R (Review) */
 .kt{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-weight:700;margin-right:.2rem;}
-.kt-fp{color:hsl(6,63%,46%);} .kt-r{color:hsl(220,80%,50%);}
-.dark .kt-fp{color:hsl(6,80%,68%);} .dark .kt-r{color:hsl(220,85%,72%);}
+.kt-fp{color:hsl(175,70%,30%);} .kt-r{color:hsl(220,80%,50%);}
+.dark .kt-fp{color:hsl(175,60%,58%);} .dark .kt-r{color:hsl(220,85%,72%);}
 </style>
 </head>
 <body>
@@ -413,7 +413,7 @@ i.ra{background:hsl(265,55%,55%);} i.rs{background:hsl(180,80%,27%);}
       <div class="collapsible" id="overtimeSection" data-supervisor-only="1">
         <button class="collapsible-trigger" onclick="toggleCollapsible('overtime')"><span>🕒 Overtime</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
         <div class="collapsible-content" id="overtimeContent">
-          <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:.85rem">Worked time over 8 hours on a scheduled day, plus any time on an OFF day (work_schedules tab). Lunch is excluded; 15-minute breaks count. Work started before 4am counts toward the previous day. Based on tracked time only, so anyone who only tracks AHT will undercount.</p>
+          <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:.85rem">Worked time over 8 hours on a scheduled day, plus any time on an OFF day (work_schedules tab). Lunch is excluded; 15-minute breaks count. Work started before 4am counts toward the previous day. Days with 45 minutes or less of overtime aren't counted (signups are in 1-hour blocks); anything over that counts in full. Based on tracked time only, so anyone who only tracks AHT will undercount.</p>
           <div class="table-wrap table-wrap-scroll"><table><thead><tr><th>Analyst</th><th style="text-align:right">Days</th><th style="text-align:right">Worked</th><th style="text-align:right">Regular</th><th style="text-align:right">Over 8h</th><th style="text-align:right">Off Days</th><th style="text-align:right">Total OT</th></tr></thead><tbody id="overtimeBody"><tr><td colspan="7" class="empty">No overtime for this period</td></tr></tbody></table></div>
         </div>
       </div>
@@ -1601,7 +1601,7 @@ function overtimeTileHtml(){
     sub = parts.length ? parts.join(" · ") : "None tracked";
     if (unknown) sub += " · off days unknown";
   }
-  var tip = "Worked time over 8 hours on a scheduled day, plus any time on an OFF day. Lunch excluded; 15-minute breaks count. Based on tracked time only.";
+  var tip = "Worked time over 8 hours on a scheduled day, plus any time on an OFF day. Lunch excluded; 15-minute breaks count. Days with 45 minutes or less of overtime aren't counted. Based on tracked time only.";
   var label = '<div class="stat-label">'+(state.user.isSupervisor ? "Team Overtime" : "My Overtime")+'</div>';
   var inner = label+'<div class="stat-value">'+v(tot)+'</div><div class="stat-sub">'+sub+'</div>';
   if (!state.user.isSupervisor) return '<div class="stat-card" title="'+esc(tip)+'">'+inner+'</div>';
